@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { registerAgentAdminRoutes } from "./api/agentAdmin.js";
+import { registerGroupsRoutes } from "./api/groups.js";
 import { registerOpsRoutes } from "./api/ops.js";
 import { registerAuthRoutes } from "./auth.js";
 import { bootstrapPersonalChannel } from "./bootstrap.js";
@@ -43,6 +45,8 @@ await registerEvolutionWebhook(app);
 if (env.DATABASE_URL) {
   await registerAuthRoutes(app);
   await registerOpsRoutes(app);
+  await registerAgentAdminRoutes(app);
+  await registerGroupsRoutes(app);
   await registerSetupRoutes(app);
 }
 

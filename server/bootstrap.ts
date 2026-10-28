@@ -86,6 +86,23 @@ export async function bootstrapPersonalChannel(database: Db): Promise<void> {
   }
 
   await ensureOwner(database, tenantId);
+  await ensureAgentWhitelist(database, tenantId);
+}
+
+async function ensureAgentWhitelist(database: Db, tenantId: string): Promise<void> {
+  const phone = process.env.BOOTSTRAP_OWNER_PHONE?.replace(/\D/g, "");
+  if (!phone) return;
+  const channel = await database.query<{ id: string }>(
+    `select id from channels where tenant_id = $1 and kind = 'agent_personal' limit 1`,
+    [tenantId],
+  );
+  if (!channel.rows[0]) return;
+  await database.query(
+    `insert into agent_recipients (tenant_id, channel_id, phone, can_command, label)
+     values ($1,$2,$3,true,'dono')
+     on conflict (channel_id, phone) do nothing`,
+    [tenantId, channel.rows[0].id, phone],
+  );
 }
 
 async function ensureOwner(database: Db, tenantId: string): Promise<void> {

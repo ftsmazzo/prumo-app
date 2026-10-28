@@ -61,19 +61,44 @@ export async function storeMessages(
       continue;
     }
 
-    const jobType = jobTypeFor(opts.channelKind, message);
-    if (!jobType) continue;
-    const outcome = await enqueueJobSafe(client, {
-      tenantId: opts.tenantId,
-      type: jobType,
-      payload: {
-        messageId: inserted,
+    // Grupo: grava sempre; extrai só se follow=true (opt-in).
+    if (opts.channelKind.startsWith("listen_") && message.isGroup) {
+      const group = await upsertGroup(client, {
+        tenantId: opts.tenantId,
         channelId: opts.channelId,
-        channelKind: opts.channelKind,
-      },
-      dedupeKey: `${jobType}:${inserted}`,
-    });
-    if (outcome === "inserted") jobs += 1;
+        jid: message.remoteJid,
+        name: message.pushName,
+        at: message.providerTimestamp,
+      });
+      if (group.follow) {
+        const outcome = await enqueueJobSafe(client, {
+          tenantId: opts.tenantId,
+          type: "extract_items",
+          payload: {
+            messageId: inserted,
+            channelId: opts.channelId,
+            groupId: group.id,
+          },
+          dedupeKey: `extract:${inserted}`,
+        });
+        if (outcome === "inserted") jobs += 1;
+      }
+      continue;
+    }
+
+    if (opts.channelKind.startsWith("agent_")) {
+      const outcome = await enqueueJobSafe(client, {
+        tenantId: opts.tenantId,
+        type: "agent_turn",
+        payload: {
+          messageId: inserted,
+          channelId: opts.channelId,
+          channelKind: opts.channelKind,
+        },
+        dedupeKey: `agent_turn:${inserted}`,
+      });
+      if (outcome === "inserted") jobs += 1;
+    }
   }
 
   return {
@@ -85,10 +110,27 @@ export async function storeMessages(
   };
 }
 
-function jobTypeFor(channelKind: string, message: IncomingMessage): string | null {
-  if (channelKind.startsWith("agent_")) return "agent_turn";
-  if (channelKind.startsWith("listen_") && message.isGroup) return "extract_items";
-  return null;
+async function upsertGroup(
+  client: pg.PoolClient,
+  opts: {
+    tenantId: string;
+    channelId: string;
+    jid: string;
+    name: string | null;
+    at: Date;
+  },
+): Promise<{ id: string; follow: boolean }> {
+  const r = await client.query<{ id: string; follow: boolean }>(
+    `insert into groups (tenant_id, channel_id, jid, name, last_message_at)
+     values ($1,$2,$3,coalesce($4,''),$5)
+     on conflict (channel_id, jid) do update
+       set last_message_at = greatest(groups.last_message_at, excluded.last_message_at),
+           name = case when excluded.name <> '' then excluded.name else groups.name end,
+           updated_at = now()
+     returning id, follow`,
+    [opts.tenantId, opts.channelId, opts.jid, opts.name, opts.at.toISOString()],
+  );
+  return r.rows[0];
 }
 
 async function insertMessage(
