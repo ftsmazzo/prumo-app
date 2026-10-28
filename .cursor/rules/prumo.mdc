@@ -1,0 +1,8 @@
+---
+description: Regras do Prumo (prumo-app)
+globs:
+alwaysApply: true
+---
+
+Siga `AGENTS.md` na raiz como fonte única. Produto e anti-objetivos em `PRODUTO.md` e `docs/`.
+Repo público: nunca commitar segredos. MVP = modo Pessoal; operar > classificar.

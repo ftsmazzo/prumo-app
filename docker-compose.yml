@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: prumo
+      POSTGRES_PASSWORD: prumo
+      POSTGRES_DB: prumo
+    ports:
+      - "5433:5432"
+    volumes:
+      - prumo_pg:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+volumes:
+  prumo_pg:
