@@ -1,10 +1,11 @@
 import type pg from "pg";
 import { applyDecisions } from "./apply.js";
-import { decideFromEvidence } from "./decide.js";
+import { decideFromEvidence, type DecisionAction } from "./decide.js";
+import { decideWithLlm } from "./decideLlm.js";
 import { refreshConversationBrief } from "./organize.js";
 
 /**
- * Pipeline fase 2: organiza evidência da conversa → decide → propõe create|update.
+ * Pipeline fase 2: organiza evidência → regras → (se noop) LLM curto → apply.
  * Mensagem ≠ compromisso. Brief ≠ tarefa.
  */
 export async function organizeAndDecide(
@@ -15,7 +16,7 @@ export async function organizeAndDecide(
     messageId?: string | null;
     timezone?: string;
   },
-): Promise<{ actions: number; proposed: number; applied: number }> {
+): Promise<{ actions: number; proposed: number; applied: number; source: string }> {
   const brief = await refreshConversationBrief(client, {
     tenantId: opts.tenantId,
     conversationId: opts.conversationId,
@@ -61,7 +62,7 @@ export async function organizeAndDecide(
     [opts.tenantId, opts.conversationId],
   );
 
-  const actions = decideFromEvidence({
+  const decideInput = {
     timezone,
     now: new Date(),
     briefSummary: brief.summary,
@@ -78,7 +79,19 @@ export async function organizeAndDecide(
       status: t.status,
       dueOn: t.due_on,
     })),
-  });
+  };
+
+  let actions: DecisionAction[] = decideFromEvidence(decideInput);
+  let source = "rules";
+
+  const onlyNoop = actions.length === 1 && actions[0]?.type === "noop";
+  if (onlyNoop) {
+    const llmActions = await decideWithLlm(decideInput);
+    if (llmActions && llmActions.length > 0) {
+      actions = llmActions;
+      source = "llm";
+    }
+  }
 
   const applied = await applyDecisions(client, {
     tenantId: opts.tenantId,
@@ -92,5 +105,6 @@ export async function organizeAndDecide(
     actions: actions.length,
     proposed: applied.filter((a) => a.status === "proposed").length,
     applied: applied.filter((a) => a.status === "applied").length,
+    source,
   };
 }

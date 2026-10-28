@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { confirmDecisionEvent } from "../apply.js";
 import { requireUser, withTenant } from "../auth.js";
+import { enqueueJobSafe } from "../jobs.js";
 
 export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/today", async (req, reply) => {
@@ -192,6 +193,31 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!result.ok) return reply.code(404).send({ error: "not_found_or_not_proposed" });
       return result;
+    });
+  });
+
+  /** Reenfileira organize_and_decide em todas as conversas (piloto / após ligar LLM). */
+  app.post("/api/ops/reorganize", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    return withTenant(user.tenantId, async (client) => {
+      const convs = await client.query<{ id: string }>(
+        `select id from conversations where tenant_id = $1 order by last_message_at desc limit 100`,
+        [user.tenantId],
+      );
+      let enqueued = 0;
+      for (const c of convs.rows) {
+        const outcome = await enqueueJobSafe(client, {
+          tenantId: user.tenantId,
+          type: "organize_and_decide",
+          payload: { conversationId: c.id, reason: "manual_reorganize" },
+          dedupeKey: `organize:${c.id}`,
+          runAt: new Date(Date.now() + 2_000),
+          bumpExistingRunAt: true,
+        });
+        if (outcome === "inserted" || outcome === "bumped") enqueued += 1;
+      }
+      return { conversations: convs.rows.length, enqueued };
     });
   });
 }
