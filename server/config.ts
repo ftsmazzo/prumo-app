@@ -5,6 +5,10 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DATABASE_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
+  RUN_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === "1" || v === "true"),
 });
 
 export const env = schema.parse(process.env);

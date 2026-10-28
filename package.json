@@ -10,6 +10,8 @@
     "build:web": "vite build --config web/vite.config.ts",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node --import tsx server/index.ts",
+    "worker": "node --import tsx server/worker.ts",
+    "seed": "node --import tsx server/seed.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

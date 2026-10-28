@@ -12,6 +12,7 @@ ENV PORT=3000
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY server ./server
+COPY db ./db
 COPY --from=build /app/web/dist ./web/dist
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
