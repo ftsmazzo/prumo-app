@@ -7,6 +7,7 @@ import { bootstrapPersonalChannel } from "./bootstrap.js";
 import { env } from "./config.js";
 import { closeDb, db, pingDb } from "./db.js";
 import { migrate } from "./migrate.js";
+import { registerSetupRoutes } from "./setup.js";
 import { registerEvolutionWebhook } from "./webhooks/evolution.js";
 import { startWorkerLoop } from "./worker.js";
 
@@ -37,6 +38,9 @@ app.get("/api/health", async () => ({
 }));
 
 await registerEvolutionWebhook(app);
+if (env.DATABASE_URL) {
+  await registerSetupRoutes(app);
+}
 
 if (existsSync(staticDir)) {
   await app.register(fastifyStatic, {
