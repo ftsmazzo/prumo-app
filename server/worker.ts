@@ -3,20 +3,32 @@ import { env } from "./config.js";
 import { db, getPool } from "./db.js";
 import { claimJobs, completeJob, failJob, type JobRow } from "./jobs.js";
 import { migrate } from "./migrate.js";
+import { organizeAndDecide } from "./organizeDecide.js";
 
 const MAX_ATTEMPTS = 5;
 
-export type JobHandler = (job: JobRow) => Promise<void>;
+export type JobHandler = (job: JobRow, client: import("pg").PoolClient) => Promise<void>;
 
 const handlers: Record<string, JobHandler> = {
-  ingest_followup: async (job) => {
-    console.info("[worker] ingest_followup (fase 2 opera depois)", job.payload);
+  organize_and_decide: async (job, client) => {
+    const conversationId = String(job.payload.conversationId ?? "");
+    if (!conversationId) throw new Error("organize_and_decide: missing conversationId");
+    const result = await organizeAndDecide(client, {
+      tenantId: job.tenant_id,
+      conversationId,
+      messageId: job.payload.messageId ? String(job.payload.messageId) : null,
+    });
+    console.info("[worker] organize_and_decide", { conversationId, ...result });
   },
   extract_items: async (job) => {
-    console.info("[worker] extract_items (fase 4)", job.payload);
+    console.info("[worker] extract_items (fase 4 grupos)", job.payload);
   },
   agent_turn: async (job) => {
     console.info("[worker] agent_turn (fase 3)", job.payload);
+  },
+  /** legado fase 1 — no-op seguro */
+  ingest_followup: async (job) => {
+    console.info("[worker] ingest_followup deprecated→organize_and_decide", job.payload);
   },
 };
 
@@ -44,7 +56,7 @@ export async function processOnce(limit = 5): Promise<number> {
       if (!handler) {
         await failJob(jobClient, job.id, `unknown job type: ${job.type}`);
       } else {
-        await handler(job);
+        await handler(job, jobClient);
         await completeJob(jobClient, job.id);
       }
       await jobClient.query("commit");

@@ -95,6 +95,61 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       `select count(*)::text as n from messages where tenant_id = $1`,
       [channel.tenant_id],
     );
+    const conversations = await pool.query<{
+      id: string;
+      title: string;
+      peer_phone: string;
+      message_count: number;
+      last_message_at: string;
+      brief: string | null;
+    }>(
+      `select c.id, c.title, c.peer_phone, c.message_count,
+              c.last_message_at::text,
+              left(coalesce(b.summary, ''), 280) as brief
+         from conversations c
+         left join conversation_briefs b on b.conversation_id = c.id
+        where c.tenant_id = $1
+        order by c.last_message_at desc
+        limit 10`,
+      [channel.tenant_id],
+    );
+    const decisions = await pool.query<{
+      id: string;
+      action: string;
+      status: string;
+      rationale: string;
+      created_at: string;
+    }>(
+      `select id, action, status, rationale, created_at::text
+         from decision_events
+        where tenant_id = $1
+        order by created_at desc
+        limit 10`,
+      [channel.tenant_id],
+    );
+    const commitments = await pool.query<{
+      id: string;
+      title: string;
+      status: string;
+      starts_at: string;
+      needs_confirm: boolean;
+    }>(
+      `select id, title, status, starts_at::text, needs_confirm
+         from commitments where tenant_id = $1
+        order by starts_at desc limit 10`,
+      [channel.tenant_id],
+    );
+    const tasks = await pool.query<{
+      id: string;
+      title: string;
+      status: string;
+      needs_confirm: boolean;
+    }>(
+      `select id, title, status, needs_confirm
+         from tasks where tenant_id = $1
+        order by created_at desc limit 10`,
+      [channel.tenant_id],
+    );
 
     return {
       channelId: channel.id,
@@ -103,6 +158,10 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       channels: counts.rows,
       jobs: jobs.rows,
       latest: messages.rows,
+      conversations: conversations.rows,
+      decisions: decisions.rows,
+      commitments: commitments.rows,
+      tasks: tasks.rows,
     };
   });
 }

@@ -1,7 +1,11 @@
 import type pg from "pg";
+import { attachMessageToConversation } from "../conversations.js";
 import { enqueueJobSafe } from "../jobs.js";
 import type { IncomingMessage } from "./evolution.js";
 import { parseMessagesUpsert } from "./evolution.js";
+
+/** Debounce: agrupa rajada de mensagens antes de organizar/decidir. */
+const ORGANIZE_DEBOUNCE_MS = 8_000;
 
 export type StoreResult = {
   received: number;
@@ -30,6 +34,33 @@ export async function storeMessages(
     if (!inserted) continue;
     stored += 1;
 
+    // Escuta 1:1 → ancora na conversa (evidência). Não cria compromisso aqui.
+    if (opts.channelKind.startsWith("listen_") && !message.isGroup) {
+      const conv = await attachMessageToConversation(client, {
+        tenantId: opts.tenantId,
+        channelId: opts.channelId,
+        messageId: inserted,
+        peerPhone: message.contactPhone,
+        pushName: message.pushName,
+        providerTimestamp: message.providerTimestamp,
+      });
+      const runAt = new Date(Date.now() + ORGANIZE_DEBOUNCE_MS);
+      const outcome = await enqueueJobSafe(client, {
+        tenantId: opts.tenantId,
+        type: "organize_and_decide",
+        payload: {
+          conversationId: conv.id,
+          messageId: inserted,
+          channelId: opts.channelId,
+        },
+        dedupeKey: `organize:${conv.id}`,
+        runAt,
+        bumpExistingRunAt: true,
+      });
+      if (outcome === "inserted" || outcome === "bumped") jobs += 1;
+      continue;
+    }
+
     const jobType = jobTypeFor(opts.channelKind, message);
     if (!jobType) continue;
     const outcome = await enqueueJobSafe(client, {
@@ -56,10 +87,7 @@ export async function storeMessages(
 
 function jobTypeFor(channelKind: string, message: IncomingMessage): string | null {
   if (channelKind.startsWith("agent_")) return "agent_turn";
-  if (channelKind.startsWith("listen_")) {
-    if (message.isGroup) return "extract_items";
-    return "ingest_followup";
-  }
+  if (channelKind.startsWith("listen_") && message.isGroup) return "extract_items";
   return null;
 }
 

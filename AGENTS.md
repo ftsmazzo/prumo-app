@@ -36,6 +36,24 @@ Isso exige disciplina:
 6. Modos plugáveis; não obrigar quatro telefones.
 7. Grupo: opt-in; sem LLM por mensagem.
 
+## Camadas (anti-falha Demanda)
+
+Separar **sempre** evidência de estado canônico — conversas organizadas alimentam a IA; compromisso/tarefa só saem de uma decisão explícita.
+
+| Camada | Onde | Pode |
+|---|---|---|
+| Mensagem bruta | `messages` | só ingest idempotente |
+| Conversa + fichamento | `conversations`, `conversation_briefs` | organizar thread, resumir, listar fios abertos |
+| Decisão | `decision_events` | propor `create`/`update` com rationale |
+| Canônico | `commitments`, `tasks` | materializar após decide/apply (ou confirm) |
+
+Regras duras:
+
+- Webhook/ingest **nunca** insere em `commitments`/`tasks`.
+- Preferir **atualizar** item aberto do mesmo assunto a criar duplicata.
+- Na dúvida: `needs_confirm` / status `proposed` — não gravar canônico cego.
+- Brief da conversa ≠ compromisso. Mensagem ≠ tarefa.
+
 ## Checklist de segurança (todo PR)
 
 - [ ] Nenhum segredo no repo

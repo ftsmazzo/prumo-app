@@ -8,7 +8,7 @@ export type JobRow = {
   attempts: number;
 };
 
-/** Enfileira job; se dedupe_key já está pending/running, não duplica. */
+/** Enfileira job; se dedupe_key já está pending/running, não duplica (ou adia run_at). */
 export async function enqueueJobSafe(
   client: pg.PoolClient | { query: pg.Pool["query"] },
   opts: {
@@ -17,16 +17,32 @@ export async function enqueueJobSafe(
     payload: Record<string, unknown>;
     dedupeKey?: string | null;
     runAt?: Date;
+    /** Se já existe pending com a mesma dedupe_key, empurra run_at (debounce de conversa). */
+    bumpExistingRunAt?: boolean;
   },
-): Promise<"inserted" | "duplicate"> {
+): Promise<"inserted" | "duplicate" | "bumped"> {
   if (opts.dedupeKey) {
-    const existing = await client.query(
-      `select id from jobs
+    const existing = await client.query<{ id: string; state: string }>(
+      `select id, state from jobs
        where tenant_id = $1 and dedupe_key = $2 and state in ('pending', 'running')
        limit 1`,
       [opts.tenantId, opts.dedupeKey],
     );
-    if (existing.rowCount) return "duplicate";
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      if (opts.bumpExistingRunAt && row.state === "pending" && opts.runAt) {
+        await client.query(
+          `update jobs
+              set run_at = greatest(run_at, $2::timestamptz),
+                  payload = $3::jsonb,
+                  updated_at = now()
+            where id = $1`,
+          [row.id, opts.runAt.toISOString(), JSON.stringify(opts.payload)],
+        );
+        return "bumped";
+      }
+      return "duplicate";
+    }
   }
   await client.query(
     `insert into jobs (tenant_id, type, payload, dedupe_key, run_at)
