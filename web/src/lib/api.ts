@@ -6,6 +6,14 @@ export type User = {
   role: string;
 };
 
+export type TodayItem = Record<string, unknown>;
+
+export type TodayResponse = {
+  commitments: TodayItem[];
+  tasks: TodayItem[];
+  pendingConfirm: TodayItem[];
+};
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -27,17 +35,12 @@ export const client = {
   login: (email: string, password: string) =>
     api<User>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => api<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  today: () =>
-    api<{
-      commitments: Array<Record<string, unknown>>;
-      tasks: Array<Record<string, unknown>>;
-      pendingConfirm: Array<Record<string, unknown>>;
-    }>("/api/today"),
+  today: () => api<TodayResponse>("/api/today"),
   commitments: (from?: string) =>
-    api<{ items: Array<Record<string, unknown>> }>(
+    api<{ items: TodayItem[] }>(
       `/api/commitments${from ? `?from=${encodeURIComponent(from)}` : ""}`,
     ),
-  tasks: () => api<{ items: Array<Record<string, unknown>> }>("/api/tasks"),
+  tasks: () => api<{ items: TodayItem[] }>("/api/tasks"),
   patchCommitment: (id: string, body: Record<string, unknown>) =>
     api(`/api/commitments/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   patchTask: (id: string, body: Record<string, unknown>) =>
