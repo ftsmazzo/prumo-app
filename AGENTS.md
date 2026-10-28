@@ -65,5 +65,16 @@ npm run build
 
 ## EasyPanel
 
-Projeto `prumo-app` (não reusar o projeto `prumo` legado).
-Ordem: postgres → redis → app → worker.
+Cota da conta: não cabia projeto novo. Serviços do unificado ficam no projeto **`prumo`** (legado), com nomes isolados:
+
+| Serviço | Papel |
+|---|---|
+| `core` | App do unificado (`prumo-app` no GitHub) |
+| `core-db` | Postgres dedicado (`prumov2`) |
+| `core-redis` | Redis (rate-limit/debounce) |
+| `app` / `postgres` / `evolution-*` | **Legado** — não misturar |
+
+Domínio: `https://prumo-core.z23axp.easypanel.host`  
+Source: Git **público** `https://github.com/ftsmazzo/prumo-app.git` (HTTPS; privado não lê neste EasyPanel).
+
+Ordem mental: core-db → core-redis → core → worker (quando existir).
