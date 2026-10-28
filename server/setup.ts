@@ -51,4 +51,58 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       };
     });
   }
+
+  app.get("/api/setup/inbox", async (req, reply) => {
+    const secret = headerSecret(req.headers as Record<string, unknown>);
+    if (!secret) return reply.code(401).send({ error: "unauthorized" });
+
+    const listen = await channelByKind("listen_personal", secret);
+    const agent = listen ? null : await channelByKind("agent_personal", secret);
+    const channel = listen ?? agent;
+    if (!channel) return reply.code(401).send({ error: "unauthorized" });
+
+    const pool = getPool();
+    const counts = await pool.query<{ n: string; status: string }>(
+      `select status, count(*)::text as n from channels where tenant_id = $1 group by status`,
+      [channel.tenant_id],
+    );
+    const messages = await pool.query<{
+      id: string;
+      direction: string;
+      contact_phone: string;
+      push_name: string | null;
+      text: string | null;
+      message_type: string;
+      provider_timestamp: string;
+      created_at: string;
+    }>(
+      `select id, direction, contact_phone, push_name, text, message_type,
+              provider_timestamp::text, created_at::text
+         from messages
+        where tenant_id = $1
+        order by created_at desc
+        limit 10`,
+      [channel.tenant_id],
+    );
+    const jobs = await pool.query<{ type: string; state: string; n: string }>(
+      `select type, state, count(*)::text as n
+         from jobs where tenant_id = $1
+         group by type, state
+         order by type, state`,
+      [channel.tenant_id],
+    );
+    const total = await pool.query<{ n: string }>(
+      `select count(*)::text as n from messages where tenant_id = $1`,
+      [channel.tenant_id],
+    );
+
+    return {
+      channelId: channel.id,
+      channelStatus: channel.status,
+      messageTotal: Number(total.rows[0]?.n ?? 0),
+      channels: counts.rows,
+      jobs: jobs.rows,
+      latest: messages.rows,
+    };
+  });
 }
