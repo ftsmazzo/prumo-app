@@ -50,26 +50,26 @@ export async function applyDecisions(
     const status = needsConfirm ? "proposed" : "applied";
 
     if (action.type === "create_commitment") {
-      let entityId: string | null = null;
-      if (!needsConfirm) {
-        const r = await client.query<{ id: string }>(
-          `insert into commitments (
-             tenant_id, person_id, conversation_id, source_message_id,
-             title, starts_at, ends_at, status, needs_confirm
-           ) values ($1,$2,$3,$4,$5,$6,$7,'confirmed',false)
-           returning id`,
-          [
-            opts.tenantId,
-            opts.personId,
-            opts.conversationId,
-            opts.messageId,
-            action.title,
-            action.startsAt,
-            action.endsAt ?? null,
-          ],
-        );
-        entityId = r.rows[0].id;
-      }
+      // Canônico no SQL com needs_confirm — painel/agente confirmam; não fica só no event.
+      const r = await client.query<{ id: string }>(
+        `insert into commitments (
+           tenant_id, person_id, conversation_id, source_message_id,
+           title, starts_at, ends_at, status, needs_confirm
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         returning id`,
+        [
+          opts.tenantId,
+          opts.personId,
+          opts.conversationId,
+          opts.messageId,
+          action.title,
+          action.startsAt,
+          action.endsAt ?? null,
+          needsConfirm ? "planned" : "confirmed",
+          needsConfirm,
+        ],
+      );
+      const entityId = r.rows[0].id;
       const ev = await insertEvent(client, {
         ...opts,
         actionType: "create_commitment",
@@ -77,14 +77,14 @@ export async function applyDecisions(
         entityId,
         rationale: action.rationale,
         payload: action,
-        status,
+        status: needsConfirm ? "proposed" : "applied",
       });
       out.push({
         eventId: ev,
         actionType: action.type,
         entityType: "commitment",
         entityId,
-        status,
+        status: needsConfirm ? "proposed" : "applied",
       });
       continue;
     }
@@ -129,25 +129,23 @@ export async function applyDecisions(
     }
 
     if (action.type === "create_task") {
-      let entityId: string | null = null;
-      if (!needsConfirm) {
-        const r = await client.query<{ id: string }>(
-          `insert into tasks (
-             tenant_id, person_id, conversation_id, source_message_id,
-             title, due_on, status, needs_confirm
-           ) values ($1,$2,$3,$4,$5,$6::date,'todo',false)
-           returning id`,
-          [
-            opts.tenantId,
-            opts.personId,
-            opts.conversationId,
-            opts.messageId,
-            action.title,
-            action.dueOn ?? null,
-          ],
-        );
-        entityId = r.rows[0].id;
-      }
+      const r = await client.query<{ id: string }>(
+        `insert into tasks (
+           tenant_id, person_id, conversation_id, source_message_id,
+           title, due_on, status, needs_confirm
+         ) values ($1,$2,$3,$4,$5,$6::date,'todo',$7)
+         returning id`,
+        [
+          opts.tenantId,
+          opts.personId,
+          opts.conversationId,
+          opts.messageId,
+          action.title,
+          action.dueOn ?? null,
+          needsConfirm,
+        ],
+      );
+      const entityId = r.rows[0].id;
       const ev = await insertEvent(client, {
         ...opts,
         actionType: "create_task",
@@ -155,14 +153,14 @@ export async function applyDecisions(
         entityId,
         rationale: action.rationale,
         payload: action,
-        status,
+        status: needsConfirm ? "proposed" : "applied",
       });
       out.push({
         eventId: ev,
         actionType: action.type,
         entityType: "task",
         entityId,
-        status,
+        status: needsConfirm ? "proposed" : "applied",
       });
       continue;
     }
@@ -271,23 +269,14 @@ export async function confirmDecisionEvent(
   let entityId = ev.rows[0].entity_id;
 
   if (action.type === "create_commitment") {
-    const r = await client.query<{ id: string }>(
-      `insert into commitments (
-         tenant_id, person_id, conversation_id, source_message_id,
-         title, starts_at, ends_at, status, needs_confirm
-       ) values ($1,$2,$3,$4,$5,$6,$7,'confirmed',false)
-       returning id`,
-      [
-        opts.tenantId,
-        ev.rows[0].person_id,
-        ev.rows[0].conversation_id,
-        ev.rows[0].message_id,
-        action.title,
-        action.startsAt,
-        action.endsAt ?? null,
-      ],
-    );
-    entityId = r.rows[0].id;
+    if (entityId) {
+      await client.query(
+        `update commitments
+            set status = 'confirmed', needs_confirm = false, updated_at = now()
+          where id = $1 and tenant_id = $2`,
+        [entityId, opts.tenantId],
+      );
+    }
   } else if (action.type === "update_commitment") {
     await client.query(
       `update commitments set
@@ -295,6 +284,7 @@ export async function confirmDecisionEvent(
          starts_at = coalesce($4::timestamptz, starts_at),
          status = coalesce($5, status),
          note = coalesce($6, note),
+         needs_confirm = false,
          updated_at = now()
        where id = $1 and tenant_id = $2`,
       [
@@ -308,22 +298,14 @@ export async function confirmDecisionEvent(
     );
     entityId = action.commitmentId;
   } else if (action.type === "create_task") {
-    const r = await client.query<{ id: string }>(
-      `insert into tasks (
-         tenant_id, person_id, conversation_id, source_message_id,
-         title, due_on, status, needs_confirm
-       ) values ($1,$2,$3,$4,$5,$6::date,'todo',false)
-       returning id`,
-      [
-        opts.tenantId,
-        ev.rows[0].person_id,
-        ev.rows[0].conversation_id,
-        ev.rows[0].message_id,
-        action.title,
-        action.dueOn ?? null,
-      ],
-    );
-    entityId = r.rows[0].id;
+    if (entityId) {
+      await client.query(
+        `update tasks
+            set needs_confirm = false, updated_at = now()
+          where id = $1 and tenant_id = $2`,
+        [entityId, opts.tenantId],
+      );
+    }
   } else if (action.type === "update_task") {
     await client.query(
       `update tasks set
@@ -331,6 +313,7 @@ export async function confirmDecisionEvent(
          status = coalesce($4, status),
          due_on = coalesce($5::date, due_on),
          note = coalesce($6, note),
+         needs_confirm = false,
          updated_at = now()
        where id = $1 and tenant_id = $2`,
       [

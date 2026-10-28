@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { registerOpsRoutes } from "./api/ops.js";
+import { registerAuthRoutes } from "./auth.js";
 import { bootstrapPersonalChannel } from "./bootstrap.js";
 import { env } from "./config.js";
 import { closeDb, db, pingDb } from "./db.js";
@@ -39,6 +41,8 @@ app.get("/api/health", async () => ({
 
 await registerEvolutionWebhook(app);
 if (env.DATABASE_URL) {
+  await registerAuthRoutes(app);
+  await registerOpsRoutes(app);
   await registerSetupRoutes(app);
 }
 

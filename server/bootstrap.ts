@@ -1,4 +1,5 @@
 import type { Db } from "./db.js";
+import { hashPassword } from "./passwords.js";
 import { hashSecret } from "./security.js";
 
 type ChannelKind = "listen_personal" | "agent_personal";
@@ -83,4 +84,27 @@ export async function bootstrapPersonalChannel(database: Db): Promise<void> {
       instanceName: process.env.BOOTSTRAP_AGENT_INSTANCE || "prumo-agent",
     });
   }
+
+  await ensureOwner(database, tenantId);
+}
+
+async function ensureOwner(database: Db, tenantId: string): Promise<void> {
+  const email = process.env.BOOTSTRAP_OWNER_EMAIL;
+  const password = process.env.BOOTSTRAP_OWNER_PASSWORD;
+  if (!email || !password) return;
+  if (password.length < 8) {
+    console.warn("[bootstrap] BOOTSTRAP_OWNER_PASSWORD too short — skip owner");
+    return;
+  }
+  const existing = await database.query(
+    `select id from users where tenant_id = $1 and lower(email) = lower($2)`,
+    [tenantId, email],
+  );
+  if (existing.rows[0]) return;
+  await database.query(
+    `insert into users (tenant_id, email, password_hash, name, role)
+     values ($1, $2, $3, $4, 'owner')`,
+    [tenantId, email.toLowerCase(), hashPassword(password), process.env.BOOTSTRAP_OWNER_NAME || "Dono"],
+  );
+  console.info(`[bootstrap] owner user=${email.toLowerCase()}`);
 }
