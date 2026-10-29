@@ -185,7 +185,7 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
         );
         ids = rows.rows.map((r) => r.id);
       }
-      const results: Array<{ id: string; micro: string; source: string }> = [];
+      const results: Array<{ id: string; micro: string; source: string; error?: string }> = [];
       for (const id of ids) {
         const brief = await refreshConversationBrief(client, {
           tenantId: user.tenantId,
@@ -195,6 +195,7 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
           id,
           micro: brief.microSummary.slice(0, 160),
           source: brief.ficharSource,
+          error: brief.ficharError,
         });
       }
       return {

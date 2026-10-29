@@ -23,13 +23,16 @@ export type FichadoResult = {
   tags: string[];
   tone: string;
   source: "llm" | "fallback";
+  error?: string;
 };
 
 type LlmOut = {
   summary?: string;
   microSummary?: string;
+  micro_summary?: string;
   themes?: Array<{ label?: string; status?: string }>;
-  openItems?: Array<{ kind?: string; label?: string; ownerAction?: boolean }>;
+  openItems?: Array<{ kind?: string; label?: string; ownerAction?: boolean; owner_action?: boolean }>;
+  open_items?: Array<{ kind?: string; label?: string; ownerAction?: boolean; owner_action?: boolean }>;
   tags?: string[];
   tone?: string;
 };
@@ -102,16 +105,20 @@ export async function ficharConversation(
     }
 
     const summary = cleanSummary(data.summary || "");
-    const micro = cleanMicro(data.microSummary || data.summary || "");
+    const micro = cleanMicro(data.microSummary || data.micro_summary || data.summary || "");
     if (isBadSummary(summary) && isBadSummary(micro)) {
       console.warn("[fichar] LLM respondeu mas resumo inválido", {
         summary: summary.slice(0, 80),
         micro: micro.slice(0, 80),
+        keys: Object.keys(data || {}),
       });
-      return fallbackFichado(thread, heuristicTags);
+      return {
+        ...fallbackFichado(thread, heuristicTags),
+        error: `llm_bad_summary keys=${Object.keys(data || {}).join(",")}`,
+      };
     }
 
-    const openItems = normalizeItems(data.openItems);
+    const openItems = normalizeItems(data.openItems || data.open_items);
     const themes = (data.themes || [])
       .filter((t) => t.label)
       .map((t) => ({
@@ -132,12 +139,15 @@ export async function ficharConversation(
       source: "llm",
     };
   } catch (err) {
-    console.warn("[fichar] falhou", err instanceof Error ? err.message : err);
-    return fallbackFichado(thread, heuristicTags);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[fichar] falhou", msg);
+    return { ...fallbackFichado(thread, heuristicTags), error: msg.slice(0, 240) };
   }
 }
 
-function normalizeItems(raw: LlmOut["openItems"]): FichadoOpenItem[] {
+function normalizeItems(
+  raw: LlmOut["openItems"] | LlmOut["open_items"],
+): FichadoOpenItem[] {
   const out: FichadoOpenItem[] = [];
   for (const it of raw || []) {
     const kind = it.kind;
@@ -152,7 +162,7 @@ function normalizeItems(raw: LlmOut["openItems"]): FichadoOpenItem[] {
     out.push({
       kind: kind as FichadoOpenItem["kind"],
       label,
-      ownerAction: Boolean(it.ownerAction),
+      ownerAction: Boolean(it.ownerAction ?? it.owner_action),
     });
   }
   return out.slice(0, 6);

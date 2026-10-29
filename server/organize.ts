@@ -11,6 +11,7 @@ export type BriefUpdate = {
   openItems: Array<{ kind: string; label: string; ownerAction?: boolean }>;
   recentCount: number;
   ficharSource: string;
+  ficharError?: string;
 };
 
 /**
@@ -98,6 +99,7 @@ export async function refreshConversationBrief(
     themes: fichado.themes,
     tone: fichado.tone,
     ficharSource: fichado.source,
+    ficharError: fichado.error || null,
     // Transcript curto só como evidência interna — UI mostra summary LLM.
     transcriptTail: lines.slice(-24),
     updatedFrom: "organize",
@@ -144,5 +146,6 @@ export async function refreshConversationBrief(
     openItems: fichado.openItems,
     recentCount: chronological.length,
     ficharSource: fichado.source,
+    ficharError: fichado.error,
   };
 }
