@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { attachMessageToConversation } from "../conversations.js";
 import { enqueueJobSafe } from "../jobs.js";
+import { shouldSkipPeerOnListen } from "../peerFilter.js";
 import type { IncomingMessage } from "./evolution.js";
 import { parseMessagesUpsert } from "./evolution.js";
 
@@ -36,6 +37,16 @@ export async function storeMessages(
 
     // Escuta 1:1 → ancora na conversa (evidência). Não cria compromisso aqui.
     if (opts.channelKind.startsWith("listen_") && !message.isGroup) {
+      const skip = await shouldSkipPeerOnListen(client, {
+        tenantId: opts.tenantId,
+        peerPhone: message.contactPhone,
+        pushName: message.pushName,
+      });
+      if (skip.skip) {
+        // Mensagem fica gravada no bruto; não vira contato/fichamento (ex.: Secretaria).
+        console.info("[ingest] skip peer on listen", skip.reason, message.contactPhone);
+        continue;
+      }
       const conv = await attachMessageToConversation(client, {
         tenantId: opts.tenantId,
         channelId: opts.channelId,

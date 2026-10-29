@@ -30,21 +30,48 @@ export async function organizeAndDecide(
     person_name: string | null;
     person_note: string | null;
     peer_push_name: string | null;
+    person_kind: string | null;
+    person_importance: string | null;
+    person_vip: boolean | null;
+    role_title: string | null;
+    org_name: string | null;
   }>(
     `select c.person_id, coalesce(t.timezone, 'America/Sao_Paulo') as timezone,
-            p.name as person_name, p.note as person_note, c.peer_push_name
+            p.name as person_name, p.note as person_note, c.peer_push_name,
+            p.kind as person_kind, p.importance as person_importance,
+            coalesce(p.vip, false) as person_vip,
+            p.role_title, o.name as org_name
        from conversations c
        join tenants t on t.id = c.tenant_id
        left join people p on p.id = c.person_id
+       left join organizations o on o.id = p.organization_id
       where c.id = $1`,
     [opts.conversationId],
   );
+
+  // Secretaria / self nunca entram no motor de decisão.
+  if (conv.rows[0]?.person_kind === "agent" || conv.rows[0]?.person_kind === "self") {
+    return { actions: 0, proposed: 0, applied: 0, source: "skipped_agent_or_self" };
+  }
+
   const personId = conv.rows[0]?.person_id ?? null;
   const timezone = opts.timezone ?? conv.rows[0]?.timezone ?? "America/Sao_Paulo";
   const personName =
     conv.rows[0]?.person_name?.trim() ||
     conv.rows[0]?.peer_push_name?.trim() ||
     null;
+  const orgName = conv.rows[0]?.org_name?.trim() || null;
+  const roleTitle = conv.rows[0]?.role_title?.trim() || null;
+  const isVip = Boolean(conv.rows[0]?.person_vip);
+  const personCtx = [
+    personName,
+    conv.rows[0]?.person_kind === "client" ? "Cliente" : null,
+    isVip ? "VIP" : null,
+    roleTitle && orgName ? `${roleTitle} da ${orgName}` : orgName,
+    conv.rows[0]?.person_note,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const openCommitments = await client.query<{
     id: string;
@@ -96,7 +123,7 @@ export async function organizeAndDecide(
       .join("\n"),
     latestTexts: brief.recentTurns.length ? brief.recentTurns : brief.openThreads,
     personName,
-    personNote: conv.rows[0]?.person_note ?? null,
+    personNote: personCtx || conv.rows[0]?.person_note || null,
     openCommitments: openCommitments.rows.map((c) => ({
       id: c.id,
       title: c.title,
@@ -137,6 +164,47 @@ export async function organizeAndDecide(
     messageId: opts.messageId ?? null,
     actions,
   });
+
+  // Aviso só se prioridade + stake real E ainda sem proposta pra confirmar.
+  // Claro → propose (acima). Ambíguo mas importante → notify. Ruído → silêncio.
+  try {
+    const { shouldNotifyFromBrief, enqueueOwnerNotify, craftNotifyBody } = await import(
+      "./notify.js"
+    );
+    const ownerActions = brief.openItems.filter((i) => i.ownerAction).length;
+    const alreadyProposed = applied.some(
+      (a) =>
+        a.status === "proposed" ||
+        a.status === "applied",
+    );
+    const gate = shouldNotifyFromBrief({
+      microSummary: brief.microSummary,
+      summary: brief.summary,
+      importance: conv.rows[0]?.person_importance || "normal",
+      kind: conv.rows[0]?.person_kind || "contact",
+      vip: isVip,
+      orgName,
+      openOwnerActions: ownerActions,
+      alreadyProposed:
+        alreadyProposed &&
+        actions.some((a) => a.type !== "noop"),
+    });
+    if (gate.notify) {
+      await enqueueOwnerNotify(client, {
+        tenantId: opts.tenantId,
+        conversationId: opts.conversationId,
+        body: craftNotifyBody({
+          personName,
+          orgName,
+          roleTitle,
+          vip: isVip,
+          microSummary: brief.microSummary,
+        }),
+      });
+    }
+  } catch (err) {
+    console.warn("[notify] falhou", err instanceof Error ? err.message : err);
+  }
 
   return {
     actions: actions.length,

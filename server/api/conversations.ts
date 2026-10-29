@@ -27,6 +27,7 @@ export async function registerConversationsRoutes(app: FastifyInstance): Promise
            left join people p on p.id = c.person_id
            left join conversation_briefs b on b.conversation_id = c.id
           where c.tenant_id = $1
+            and coalesce(p.kind, 'contact') not in ('self', 'agent')
             and ($2::text is null or $2 = ''
                  or c.title ilike '%'||$2||'%'
                  or c.peer_phone ilike '%'||$2||'%'

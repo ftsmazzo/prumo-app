@@ -7,6 +7,7 @@ import { registerAgentAdminRoutes } from "./api/agentAdmin.js";
 import { registerConversationsRoutes } from "./api/conversations.js";
 import { registerGroupsRoutes } from "./api/groups.js";
 import { registerOpsRoutes } from "./api/ops.js";
+import { registerOrganizationRoutes } from "./api/organizations.js";
 import { registerPeopleRoutes } from "./api/people.js";
 import { registerAuthRoutes } from "./auth.js";
 import { bootstrapPersonalChannel } from "./bootstrap.js";
@@ -48,6 +49,7 @@ if (env.DATABASE_URL) {
   await registerAuthRoutes(app);
   await registerOpsRoutes(app);
   await registerPeopleRoutes(app);
+  await registerOrganizationRoutes(app);
   await registerConversationsRoutes(app);
   await registerAgentAdminRoutes(app);
   await registerGroupsRoutes(app);

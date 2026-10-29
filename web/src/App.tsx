@@ -21,7 +21,7 @@ const TITLES: Record<Tab, { title: string; subtitle: string }> = {
   },
   contatos: {
     title: "Contatos",
-    subtitle: "Nome, nota, tags e relação — contexto do secretário.",
+    subtitle: "Empresas, Cliente e VIP — o motor usa essas marcas pra decidir.",
   },
 };
 

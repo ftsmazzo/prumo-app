@@ -22,10 +22,23 @@ export type Person = {
   tags: string[];
   note: string;
   relation: string;
+  role_title?: string;
+  importance?: string;
+  vip?: boolean;
+  organization_id?: string | null;
+  organization_name?: string | null;
   name_source?: string;
   conversation_count?: number;
   open_commitments?: number;
   open_tasks?: number;
+};
+
+export type Organization = {
+  id: string;
+  name: string;
+  note: string;
+  tags: string[];
+  people_count?: number;
 };
 
 export type ConversationListItem = Record<string, unknown> & {
@@ -82,7 +95,20 @@ export const client = {
     api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   people: () => api<{ items: Person[] }>("/api/people"),
   patchPerson: (id: string, body: Record<string, unknown>) =>
-    api(`/api/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    api<Person>(`/api/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  organizations: () => api<{ items: Organization[] }>("/api/organizations"),
+  createOrganization: (body: { name: string; note?: string; tags?: string[] }) =>
+    api<Organization>("/api/organizations", { method: "POST", body: JSON.stringify(body) }),
+  patchOrganization: (id: string, body: Record<string, unknown>) =>
+    api<Organization>(`/api/organizations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  purgeAgentPeers: () =>
+    api<{ markedAgent: number; clearedBriefs: number; cancelledJobs: number }>(
+      "/api/ops/purge-agent-peers",
+      { method: "POST", body: "{}" },
+    ),
   conversations: (q?: string, tag?: string) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);

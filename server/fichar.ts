@@ -49,8 +49,9 @@ Responda só JSON:
   "tone": "social"|"operational"|"mixed"|"empty"
 }
 Direção (crítico):
-- ownerAction=true SÓ se a próxima ação for do DONO (Você precisa fazer algo).
-- Se o contato pediu e o dono já recusou, esclareceu ou o contato assumiu ("vou fazer", "estou fazendo") → ownerAction=false ou tire do openItems.
+- ownerAction=true SÓ se a próxima ação for do DONO (Você precisa fazer algo) e isso estiver claro no fio.
+- Atualização técnica do contato (link, repo, "já subi") sem pedido a você → note ou openItems com ownerAction=false — NÃO invente pendência sua.
+- Se o contato pediu e o dono já recusou, esclareceu ou o contato assumiu ("vou fazer") → ownerAction=false.
 - Pedido hipotético / oferta ("se precisar faço") NÃO vira tarefa do dono.
 - note = conhecimento útil (stack, link, processo), não to-do.
 - maybe_meeting = encontro entre pessoas com horário.

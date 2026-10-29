@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isGhostName,
   isOperatorDisplayName,
+  looksLikeAgentName,
   peerDisplayName,
   suggestTagsFromText,
 } from "./contacts.js";
@@ -30,5 +31,12 @@ describe("contacts", () => {
     const tags = suggestTagsFromText("marca reunião amanhã e envia o boleto");
     expect(tags).toContain("agenda");
     expect(tags).toContain("financeiro");
+  });
+
+  it("reconhece Secretaria/agente pelo nome", () => {
+    expect(looksLikeAgentName("Secretaria")).toBe(true);
+    expect(looksLikeAgentName("Prumo")).toBe(true);
+    expect(looksLikeAgentName("Junior")).toBe(false);
+    expect(peerDisplayName({ direction: "in", pushName: "Secretaria" })).toBeNull();
   });
 });

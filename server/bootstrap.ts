@@ -1,4 +1,5 @@
 import type { Db } from "./db.js";
+import { canonicalPhone } from "./contacts.js";
 import { hashPassword } from "./passwords.js";
 import { hashSecret } from "./security.js";
 
@@ -36,6 +37,11 @@ async function ensureChannel(
     `select id from channels where tenant_id = $1 and kind = $2 limit 1`,
     [opts.tenantId, opts.kind],
   );
+  const waPhone =
+    opts.kind === "agent_personal"
+      ? canonicalPhone(process.env.BOOTSTRAP_AGENT_PHONE || process.env.AGENT_PHONE || "")
+      : canonicalPhone(process.env.BOOTSTRAP_LISTEN_PHONE || "");
+
   if (existing.rows[0]) {
     if (opts.instanceName) {
       await database.query(
@@ -43,14 +49,27 @@ async function ensureChannel(
         [existing.rows[0].id, opts.instanceName],
       );
     }
+    if (waPhone) {
+      await database.query(`update channels set wa_phone = $2 where id = $1 and wa_phone = ''`, [
+        existing.rows[0].id,
+        waPhone,
+      ]);
+    }
     return existing.rows[0].id;
   }
   const channel = (
     await database.query<{ id: string }>(
-      `insert into channels (tenant_id, kind, name, instance_name, secret_hash, status, listen_groups)
-       values ($1, $2, $3, $4, $5, 'pending', false)
+      `insert into channels (tenant_id, kind, name, instance_name, secret_hash, status, listen_groups, wa_phone)
+       values ($1, $2, $3, $4, $5, 'pending', false, $6)
        returning id`,
-      [opts.tenantId, opts.kind, opts.name, opts.instanceName, hashSecret(opts.secret)],
+      [
+        opts.tenantId,
+        opts.kind,
+        opts.name,
+        opts.instanceName,
+        hashSecret(opts.secret),
+        waPhone,
+      ],
     )
   ).rows[0];
   console.info(`[bootstrap] ${opts.kind} channel=${channel.id}`);
@@ -87,6 +106,70 @@ export async function bootstrapPersonalChannel(database: Db): Promise<void> {
 
   await ensureOwner(database, tenantId);
   await ensureAgentWhitelist(database, tenantId);
+  await ensurePilotClientSeed(database, tenantId);
+}
+
+/** Piloto Ecommtábil: empresa + vínculos (Junior funcionário, Eliezer dono). */
+async function ensurePilotClientSeed(database: Db, tenantId: string): Promise<void> {
+  if (process.env.BOOTSTRAP_SEED_ECOMM === "0") return;
+
+  const org = await database.query<{ id: string }>(
+    `insert into organizations (tenant_id, name, note, tags)
+     values ($1, 'Ecommtábil', 'Cliente piloto — apresentar o Prumo ao Eliezer.', '{cliente,piloto}')
+     on conflict do nothing
+     returning id`,
+    [tenantId],
+  );
+  let orgId = org.rows[0]?.id;
+  if (!orgId) {
+    orgId = (
+      await database.query<{ id: string }>(
+        `select id from organizations where tenant_id = $1 and lower(name) = lower('Ecommtábil')`,
+        [tenantId],
+      )
+    ).rows[0]?.id;
+  }
+  if (!orgId) return;
+
+  // Liga contatos já existentes pelo nome (telefone vem da escuta).
+  await database.query(
+    `update people set
+       organization_id = $2,
+       kind = case when kind in ('self','agent') then kind else 'client' end,
+       vip = case
+         when lower(coalesce(name,'')) like '%eliezer%' then true
+         else vip
+       end,
+       role_title = case
+         when lower(coalesce(name,'')) like '%eliezer%' then 'dono'
+         when lower(coalesce(name,'')) like '%junior%' then 'funcionário'
+         else coalesce(nullif(role_title,''), 'contato')
+       end,
+       importance = case
+         when lower(coalesce(name,'')) like '%eliezer%' then 'critical'
+         when lower(coalesce(name,'')) like '%junior%' then 'high'
+         else importance
+       end,
+       relation = case
+         when lower(coalesce(name,'')) like '%eliezer%' then 'dono Ecommtábil'
+         when lower(coalesce(name,'')) like '%junior%' then 'funcionário Ecommtábil'
+         else relation
+       end,
+       note = case
+         when note <> '' then note
+         when lower(coalesce(name,'')) like '%eliezer%' then 'Dono da Ecommtábil — pitch do Prumo.'
+         when lower(coalesce(name,'')) like '%junior%' then 'Funcionário Ecommtábil · projeto ecommFlow.'
+         else note
+       end,
+       updated_at = now()
+     where tenant_id = $1
+       and (
+         lower(coalesce(name,'')) like '%junior%'
+         or lower(coalesce(name,'')) like '%eliezer%'
+       )
+       and kind not in ('self', 'agent')`,
+    [tenantId, orgId],
+  );
 }
 
 async function ensureAgentWhitelist(database: Db, tenantId: string): Promise<void> {

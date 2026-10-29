@@ -53,7 +53,9 @@ Regras:
 - Concluir tarefa → complete (+ hint)
 - Lembrar o que combinou / buscar no histórico → search (+ hint)
 - Criar compromisso com horário → create_commitment (title curto tipo secretária + startsAt ISO America/Sao_Paulo)
-- Criar tarefa/ação → create_task (title curto; dueOn só YYYY-MM-DD se souber)
+- Criar tarefa/ação que o dono pediu agora → create_task (title curto; dueOn YYYY-MM-DD se souber)
+- Pendências do motor (needs_confirm) → confirm quando ele aceitar
+- Você decide com o motor: o claro já veio pra confirmar; não invente tarefa de ruído
 - Sem ação clara → tool null e reply útil
 Nunca invente telefone, link ou valor.`;
 

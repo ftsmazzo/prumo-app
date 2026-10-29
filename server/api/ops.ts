@@ -454,13 +454,106 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  /**
+   * Marca Secretaria/agente e remove conversas do motor (lista + fichamento).
+   * Mensagens brutas permanecem; people.kind=agent some de Contatos/Conversas.
+   */
+  app.post("/api/ops/purge-agent-peers", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    const {
+      isAgentPhone,
+      looksLikeAgentName,
+      agentPhoneCandidates,
+      canonicalPhone,
+    } = await import("../contacts.js");
+    return withTenant(user.tenantId, async (client) => {
+      const agentPhone = process.env.BOOTSTRAP_AGENT_PHONE || process.env.AGENT_PHONE || "";
+      if (agentPhone) {
+        await client.query(
+          `update channels set wa_phone = $2
+            where tenant_id = $1 and kind like 'agent_%'`,
+          [user.tenantId, canonicalPhone(agentPhone)],
+        );
+      }
+
+      const people = await client.query<{
+        id: string;
+        phone: string;
+        name: string | null;
+        kind: string;
+      }>(`select id, phone, name, kind from people where tenant_id = $1`, [user.tenantId]);
+
+      let marked = 0;
+      const agentIds: string[] = [];
+      for (const p of people.rows) {
+        const hit =
+          p.kind === "agent" ||
+          isAgentPhone(p.phone) ||
+          looksLikeAgentName(p.name) ||
+          agentPhoneCandidates().some((a) => p.phone.includes(a.slice(-11)));
+        if (!hit) continue;
+        await client.query(
+          `update people set kind = 'agent', updated_at = now() where id = $1`,
+          [p.id],
+        );
+        agentIds.push(p.id);
+        marked += 1;
+      }
+
+      let cancelledJobs = 0;
+      let clearedBriefs = 0;
+      if (agentIds.length) {
+        const convs = await client.query<{ id: string }>(
+          `select id from conversations
+            where tenant_id = $1 and person_id = any($2::uuid[])`,
+          [user.tenantId, agentIds],
+        );
+        const convIds = convs.rows.map((c) => c.id);
+        if (convIds.length) {
+          const jobs = await client.query(
+            `update jobs set state = 'done', updated_at = now()
+              where tenant_id = $1 and state in ('pending','running')
+                and type = 'organize_and_decide'
+                and payload->>'conversationId' = any($2::text[])`,
+            [user.tenantId, convIds],
+          );
+          cancelledJobs = jobs.rowCount ?? 0;
+          const briefs = await client.query(
+            `delete from conversation_briefs
+              where conversation_id = any($1::uuid[])`,
+            [convIds],
+          );
+          clearedBriefs = briefs.rowCount ?? 0;
+          await client.query(
+            `update conversations set micro_summary = '', tags = '{}', updated_at = now()
+              where id = any($1::uuid[])`,
+            [convIds],
+          );
+        }
+      }
+
+      return {
+        markedAgent: marked,
+        agentPeople: agentIds.length,
+        cancelledJobs,
+        clearedBriefs,
+        agentPhones: agentPhoneCandidates(),
+      };
+    });
+  });
+
   /** Reenfileira organize_and_decide em todas as conversas (piloto / após ligar LLM). */
   app.post("/api/ops/reorganize", async (req, reply) => {
     const user = await requireUser(req, reply);
     if (!user) return;
     return withTenant(user.tenantId, async (client) => {
       const convs = await client.query<{ id: string }>(
-        `select id from conversations where tenant_id = $1 order by last_message_at desc limit 100`,
+        `select c.id from conversations c
+           left join people p on p.id = c.person_id
+          where c.tenant_id = $1
+            and coalesce(p.kind, 'contact') not in ('self', 'agent')
+          order by c.last_message_at desc limit 100`,
         [user.tenantId],
       );
       let enqueued = 0;

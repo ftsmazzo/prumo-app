@@ -66,23 +66,54 @@ export async function refreshConversationBrief(
     peer_push_name: string | null;
     prev_summary: string | null;
     prev_micro: string | null;
+    person_kind: string | null;
+    role_title: string | null;
+    importance: string | null;
+    vip: boolean | null;
+    org_name: string | null;
   }>(
     `select c.person_id, c.tags, p.name as person_name, c.peer_push_name,
-            b.summary as prev_summary, coalesce(c.micro_summary, b.micro_summary) as prev_micro
+            b.summary as prev_summary, coalesce(c.micro_summary, b.micro_summary) as prev_micro,
+            p.kind as person_kind, p.role_title, p.importance,
+            coalesce(p.vip, false) as vip, o.name as org_name
        from conversations c
        left join people p on p.id = c.person_id
+       left join organizations o on o.id = p.organization_id
        left join conversation_briefs b on b.conversation_id = c.id
       where c.id = $1`,
     [opts.conversationId],
   );
 
+  if (meta.rows[0]?.person_kind === "agent" || meta.rows[0]?.person_kind === "self") {
+    return {
+      summary: "",
+      microSummary: "",
+      openThreads: [],
+      recentTurns: [],
+      tags: [],
+      openItems: [],
+      recentCount: chronological.length,
+      ficharSource: "skipped_agent",
+    };
+  }
+
   const personName =
     meta.rows[0]?.person_name?.trim() || meta.rows[0]?.peer_push_name?.trim() || null;
+  const contactContext = [
+    personName,
+    meta.rows[0]?.person_kind === "client" ? "Cliente" : null,
+    meta.rows[0]?.vip ? "VIP" : null,
+    meta.rows[0]?.role_title && meta.rows[0]?.org_name
+      ? `${meta.rows[0].role_title} · ${meta.rows[0].org_name}`
+      : meta.rows[0]?.org_name,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const fichado = await ficharConversation(client, {
     tenantId: opts.tenantId,
     conversationId: opts.conversationId,
-    personName,
+    personName: contactContext || personName,
     threadLines: lines,
     previousSummary: meta.rows[0]?.prev_summary,
     previousMicro: meta.rows[0]?.prev_micro,

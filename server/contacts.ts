@@ -77,14 +77,39 @@ export function isOperatorPhone(phone: string | null | undefined): boolean {
   return phonesMatch(phone ?? "", owner);
 }
 
-/** PushName só é válido para batizar contato se for inbound e não for o dono. */
+/** Número do agente (Secretaria) — conversa com ele na escuta não é contato. */
+export function agentPhoneCandidates(): string[] {
+  const list = [
+    process.env.BOOTSTRAP_AGENT_PHONE,
+    process.env.AGENT_PHONE,
+    process.env.AGENT_WA_PHONE,
+  ]
+    .filter(Boolean)
+    .map((p) => canonicalPhone(String(p)));
+  return [...new Set(list.filter((p) => p.length >= 10))];
+}
+
+export function isAgentPhone(phone: string | null | undefined): boolean {
+  const peer = canonicalPhone(phone);
+  if (!peer) return false;
+  return agentPhoneCandidates().some((a) => phonesMatch(peer, a));
+}
+
+export function looksLikeAgentName(name: string | null | undefined): boolean {
+  const n = normName(name ?? "");
+  return /^(secretaria|secretario|prumo|agente( pessoal)?|assistant)$/.test(n);
+}
+
+/** PushName só é válido para batizar contato se for inbound e não for o dono/agente. */
 export function peerDisplayName(opts: {
   direction: "in" | "out";
   pushName: string | null;
 }): string | null {
   if (opts.direction !== "in") return null;
   const raw = (opts.pushName ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
-  if (!raw || isGhostName(raw) || isOperatorDisplayName(raw)) return null;
+  if (!raw || isGhostName(raw) || isOperatorDisplayName(raw) || looksLikeAgentName(raw)) {
+    return null;
+  }
   return raw;
 }
 

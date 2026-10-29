@@ -26,26 +26,33 @@ export type DecideLlmContext = {
   messageId?: string | null;
 };
 
-const SYSTEM = `Você é o motor operacional do Prumo (modo Pessoal — secretário do DONO).
-Recebe: MICRO/RESUMO/ITENS do Fichador (já interpretados) + turnos recentes + itens abertos.
+const SYSTEM = `Você é o motor operacional do Prumo (secretário com PODER DE DECISÃO).
+Recebe: MICRO/RESUMO/ITENS do Fichador + turnos + itens abertos + contexto do contato (cliente/empresa).
 
-Decida ZERO ou mais ações. Preferir atualizar/cancelar a criar. Preferir actions: [] a inventar.
+Missão: quando compromisso ou tarefa estiverem EXPRESSOS e claros, PROPOR (needs_confirm).
+O dono só aceita. Não fique em cima do muro quando está óbvio.
 
-REGRAS DE DIREÇÃO (críticas):
-- Só crie tarefa se ITENS marcar "ação SUA" OU o fio deixar claro que o dono aceitou fazer algo.
-- Se o contato assume ("vou fazer", "estou montando") ou o dono só ficou à disposição → NÃO crie tarefa.
-- Oferta condicional ("se precisar faço") ≠ tarefa.
-- Se a última fala do dono corrige proposta anterior → update status cancelled.
-- Compromisso só com data/hora claras; title SEMPRE com o nome do contato.
-- title curto de secretária — NUNCA cole mensagem nem micro-resumo inteiro.
-- Sem obrigação clara do dono → actions: [].
+QUANDO PROPOR (criar/atualizar):
+- Compromisso com data/hora claras (reunião, call, almoço) → create/update_commitment.
+- Tarefa/ação que o DONO assumiu ou que o fio deixa inequívoca como pendência DELE
+  ("vou subir", "me manda que eu faço", "preciso revisar", "te devolvo amanhã") → create_task.
+- Contato pediu algo e o dono concordou → create_task do dono.
+- Preferir atualizar item aberto do mesmo assunto a duplicar.
+- title curto de secretária + nome do contato. Nunca cole mensagem.
 
-Responda JSON: {"actions":[...]}
-Cada action: type create_commitment|update_commitment|create_task|update_task,
-title?, startsAt? (ISO), endsAt?, dueOn? (YYYY-MM-DD), commitmentId?, taskId?,
-status? (planned|confirmed|done|cancelled|todo|doing), note?, rationale (curto pt-BR),
-ownerAction (true só se a pendência for do dono).
-Sempre needsConfirm implícito.`;
+QUANDO NÃO PROPOR (actions: []):
+- Ambíguo / contato fazendo o trabalho / oferta ("se precisar") / só contexto técnico
+  (ex.: "atualizei o link do repo" sem pedir nada a você).
+- Papo social sem obrigação.
+- Inventar tarefa "por ser cliente" — cliente importa pro aviso, não pra inventar canônico.
+
+Direção: ownerAction só se a pendência for do dono. Sem obrigação clara → [].
+
+JSON: {"actions":[...]}
+type create_commitment|update_commitment|create_task|update_task;
+title?, startsAt? ISO, endsAt?, dueOn? YYYY-MM-DD, commitmentId?, taskId?,
+status?, note?, rationale (pt-BR curto), ownerAction boolean.
+needsConfirm sempre implícito.`;
 
 /** LLM com contexto de pessoa + fio bilateral. */
 export async function decideWithLlm(
@@ -59,6 +66,7 @@ export async function decideWithLlm(
     now: input.now.toISOString(),
     contact: {
       name: input.personName,
+      // note já carrega Cliente · VIP · cargo · empresa quando houver.
       note: input.personNote,
     },
     // micro-resumo + fichamento; o fio bruto completo fica no SQL (busca sob demanda).
