@@ -196,14 +196,16 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
           if (restored) break;
         }
         await client.query(
-          `update people set name = $2, name_source = case when $2 is null then '' else 'push' end, updated_at = now()
+          `update people set name = $2::text,
+             name_source = case when $2::text is null then '' else 'push' end,
+             updated_at = now()
             where id = $1`,
           [p.id, restored],
         );
         await client.query(
           `update conversations set
-             title = coalesce($2, peer_phone),
-             peer_push_name = $2,
+             title = coalesce($2::text, peer_phone),
+             peer_push_name = $2::text,
              updated_at = now()
            where person_id = $1 and tenant_id = $3`,
           [p.id, restored, user.tenantId],
