@@ -1425,3 +1425,90 @@ html[data-theme="dark"] .crm-card {
   display: grid;
   gap: 0.15rem;
 }
+
+/* Contexto: conversas + ficha */
+.field {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+.field span {
+  font-size: 0.8rem;
+  color: var(--ash);
+}
+.field input,
+.field textarea {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  background: #fff;
+}
+.row-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.brief-box {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  border-radius: 8px;
+  padding: 0.75rem;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0.5rem 0 1rem;
+}
+.thread-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+  max-height: 360px;
+  overflow: auto;
+}
+.thread-list li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.thread-list li.mine {
+  background: color-mix(in srgb, var(--plumb) 10%, transparent);
+}
+.thread-list .who {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--ash);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+.tag {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.conv-layout {
+  display: grid;
+  gap: 1rem;
+}
+.ms-dash-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}

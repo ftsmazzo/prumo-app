@@ -39,6 +39,7 @@ export function Tasks() {
                   <strong>{String(t.title)}</strong>
                   <span>
                     {String(t.status)} · {fmtDay(t.due_on)}
+                    {t.person_name ? ` · ${String(t.person_name)}` : ""}
                     {Boolean(t.needs_confirm) && <span className="tag tag-due"> confirmar</span>}
                   </span>
                 </div>

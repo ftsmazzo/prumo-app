@@ -2,9 +2,15 @@ import { useEffect, useState } from "react";
 import { client, type TodayItem, type TodayResponse } from "../lib/api";
 import { fmtDay, fmtWhen } from "../lib/format";
 
+function whoLine(item: TodayItem): string {
+  const name = item.person_name ? String(item.person_name) : "";
+  return name ? ` · ${name}` : "";
+}
+
 export function Today() {
   const [data, setData] = useState<TodayResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   async function reload() {
     try {
@@ -19,6 +25,18 @@ export function Today() {
     void reload();
   }, []);
 
+  async function resetJunk() {
+    setResetting(true);
+    try {
+      await client.resetPending();
+      await reload();
+    } catch {
+      setError("Não deu para limpar propostas.");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   if (error) return <p className="form-error">{error}</p>;
   if (!data) return <p className="boot">Carregando o dia…</p>;
 
@@ -27,6 +45,11 @@ export function Today() {
       <section className="ms-dash-panel">
         <header>
           <h3>Confirmar</h3>
+          {data.pendingConfirm.length > 0 ? (
+            <button type="button" className="btn-quiet btn-sm" disabled={resetting} onClick={() => void resetJunk()}>
+              {resetting ? "Limpando…" : "Descartar propostas e reavaliar"}
+            </button>
+          ) : null}
         </header>
         {data.pendingConfirm.length === 0 ? (
           <p className="muted panel-empty">Nada pendente.</p>
@@ -37,8 +60,8 @@ export function Today() {
                 <div>
                   <strong>{String(item.title)}</strong>
                   <span>
-                    {String(item.kind) === "commitment" ? "Compromisso" : "Tarefa"} ·{" "}
-                    {fmtWhen(item.at)}
+                    {String(item.kind) === "commitment" ? "Compromisso" : "Tarefa"}
+                    {whoLine(item)} · {fmtWhen(item.at)}
                   </span>
                 </div>
                 <button
@@ -68,7 +91,7 @@ export function Today() {
                   <strong>{String(c.title)}</strong>
                   <span>
                     {fmtWhen(c.starts_at)}
-                    {Boolean(c.needs_confirm) && <span className="tag tag-due"> confirmar</span>}
+                    {whoLine(c)}
                   </span>
                 </div>
                 <button
@@ -96,7 +119,10 @@ export function Today() {
               <li key={String(t.id)}>
                 <div>
                   <strong>{String(t.title)}</strong>
-                  <span>{fmtDay(t.due_on)}</span>
+                  <span>
+                    {fmtDay(t.due_on)}
+                    {whoLine(t)}
+                  </span>
                 </div>
                 <button
                   type="button"

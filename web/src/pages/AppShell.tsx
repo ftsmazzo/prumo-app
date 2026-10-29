@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import { Mark } from "../components/Mark";
 import type { User } from "../lib/api";
 
-export type Tab = "hoje" | "agenda" | "tarefas";
+export type Tab = "hoje" | "agenda" | "tarefas" | "conversas" | "contatos";
 
 const NAV: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: "hoje", label: "Hoje", icon: <IconGrid /> },
   { id: "agenda", label: "Agenda", icon: <IconAgenda /> },
   { id: "tarefas", label: "Tarefas", icon: <IconTasks /> },
+  { id: "conversas", label: "Conversas", icon: <IconChat /> },
+  { id: "contatos", label: "Contatos", icon: <IconPeople /> },
 ];
 
 function IconGrid() {
@@ -53,6 +55,43 @@ function IconTasks() {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconChat() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3 3.5h10a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H7l-3 2.2V10.5H3a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconPeople() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="6" cy="5.2" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.35" />
+      <path
+        d="M2.2 12.5c.4-2 1.9-3.2 3.8-3.2s3.4 1.2 3.8 3.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+      <circle cx="11.2" cy="5.6" r="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M10 12.5c.3-1.4 1.3-2.3 2.6-2.3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
         strokeLinecap="round"
       />
     </svg>

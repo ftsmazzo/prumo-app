@@ -3,6 +3,7 @@ import type pg from "pg";
 export type BriefUpdate = {
   summary: string;
   openThreads: string[];
+  recentTurns: string[];
   recentCount: number;
 };
 
@@ -39,8 +40,17 @@ export async function refreshConversationBrief(
   const summary =
     lines.length === 0
       ? "(sem texto ainda)"
-      : lines.slice(-12).join("\n").slice(0, 4000);
+      : lines.slice(-16).join("\n").slice(0, 4500);
 
+  // Fio quente bilateral — a última fala do dono conta (correção, pedido, "não é isso").
+  const recentTurns = chronological
+    .slice(-10)
+    .map((m) => {
+      const who = m.direction === "out" ? "eu" : "contato";
+      return `${who}: ${String(m.text).replace(/\s+/g, " ").slice(0, 200)}`;
+    });
+
+  // Mantém open_threads como últimas falas do contato (compat), mas decide usa recentTurns.
   const openThreads = chronological
     .filter((m) => m.direction === "in" && m.text)
     .slice(-5)
@@ -68,9 +78,13 @@ export async function refreshConversationBrief(
       person.rows[0]?.person_id ?? null,
       summary,
       openThreads,
-      JSON.stringify({ recentCount: chronological.length, updatedFrom: "organize" }),
+      JSON.stringify({
+        recentCount: chronological.length,
+        recentTurns,
+        updatedFrom: "organize",
+      }),
     ],
   );
 
-  return { summary, openThreads, recentCount: chronological.length };
+  return { summary, openThreads, recentTurns, recentCount: chronological.length };
 }

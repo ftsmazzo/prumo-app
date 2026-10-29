@@ -12,43 +12,59 @@ export async function toolToday(
     kind: string;
     title: string;
     at: Date | null;
+    who: string | null;
   }>(
     `select * from (
-       select 'compromisso' as kind, title, starts_at as at from commitments
-        where tenant_id = $1 and needs_confirm = true and status in ('planned', 'confirmed')
+       select 'compromisso' as kind, c.title, c.starts_at as at,
+              coalesce(p.name, '') as who
+         from commitments c
+         left join people p on p.id = c.person_id
+        where c.tenant_id = $1 and c.needs_confirm = true and c.status in ('planned', 'confirmed')
        union all
-       select 'tarefa', title, due_on::timestamptz from tasks
-        where tenant_id = $1 and needs_confirm = true and status in ('todo', 'doing')
+       select 'tarefa', t.title, t.due_on::timestamptz,
+              coalesce(p.name, '')
+         from tasks t
+         left join people p on p.id = t.person_id
+        where t.tenant_id = $1 and t.needs_confirm = true and t.status in ('todo', 'doing')
      ) p order by at nulls last limit 10`,
     [tenantId],
   );
 
-  const commitments = await client.query<{ title: string; starts_at: Date }>(
-    `select title, starts_at from commitments
-      where tenant_id = $1
-        and needs_confirm = false
-        and starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'
-        and starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' + interval '1 day'
-        and status in ('planned', 'confirmed')
-      order by starts_at`,
+  const commitments = await client.query<{ title: string; starts_at: Date; who: string | null }>(
+    `select c.title, c.starts_at, coalesce(p.name, '') as who
+       from commitments c
+       left join people p on p.id = c.person_id
+      where c.tenant_id = $1
+        and c.needs_confirm = false
+        and c.starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'
+        and c.starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' + interval '1 day'
+        and c.status in ('planned', 'confirmed')
+      order by c.starts_at`,
     [tenantId],
   );
-  const tasks = await client.query<{ title: string; due_on: string | null }>(
-    `select title, due_on::text from tasks
-      where tenant_id = $1
-        and needs_confirm = false
-        and status in ('todo', 'doing')
-        and (due_on is null or due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
-      order by due_on nulls last
+  const tasks = await client.query<{ title: string; due_on: string | null; who: string | null }>(
+    `select t.title, t.due_on::text, coalesce(p.name, '') as who
+       from tasks t
+       left join people p on p.id = t.person_id
+      where t.tenant_id = $1
+        and t.needs_confirm = false
+        and t.status in ('todo', 'doing')
+        and (t.due_on is null or t.due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
+      order by t.due_on nulls last
       limit 12`,
     [tenantId],
   );
+
+  const withWho = (title: string, who: string | null) =>
+    who && who.trim() && !title.toLowerCase().includes(who.trim().toLowerCase().split(/\s+/)[0]!)
+      ? `${title} · ${who.trim()}`
+      : title;
 
   const lines: string[] = [];
   if (pending.rows.length) {
     lines.push("Para confirmar:");
     for (const p of pending.rows) {
-      lines.push(`- [${p.kind}] ${p.title}`);
+      lines.push(`- [${p.kind}] ${withWho(p.title, p.who)}`);
     }
   }
   if (commitments.rows.length === 0) {
@@ -61,13 +77,13 @@ export async function toolToday(
         minute: "2-digit",
         timeZone: "America/Sao_Paulo",
       });
-      lines.push(`- ${t} ${c.title}`);
+      lines.push(`- ${t} ${withWho(c.title, c.who)}`);
     }
   }
   if (tasks.rows.length) {
     lines.push("Tarefas:");
     for (const t of tasks.rows) {
-      lines.push(`- ${t.title}${t.due_on ? ` · ${t.due_on}` : ""}`);
+      lines.push(`- ${withWho(t.title, t.who)}${t.due_on ? ` · ${t.due_on}` : ""}`);
     }
   }
   const text = lines.join("\n");

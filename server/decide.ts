@@ -1,7 +1,11 @@
 /**
  * Decide ações sobre compromisso/tarefa a partir da evidência da conversa.
  * Política: confirmar na dúvida; preferir atualizar item aberto a criar duplicata.
+ * Tarefas NÃO nascem de keyword fraca — só compromisso com horário claro (regras);
+ * o resto fica para a LLM com direção (eu vs contato).
  */
+
+import { craftSecretaryTitle } from "./polish.js";
 
 export type DecisionAction =
   | {
@@ -39,7 +43,10 @@ export type DecideInput = {
   timezone: string;
   now: Date;
   briefSummary: string;
+  /** Fio quente bilateral: "eu: …" / "contato: …" */
   latestTexts: string[];
+  personName: string | null;
+  personNote: string | null;
   openCommitments: Array<{ id: string; title: string; startsAt: string; status: string }>;
   openTasks: Array<{ id: string; title: string; status: string; dueOn: string | null }>;
 };
@@ -67,6 +74,32 @@ export function decideFromEvidence(input: DecideInput): DecisionAction[] {
   const blob = [...input.latestTexts, input.briefSummary].join("\n").toLowerCase();
   const actions: DecisionAction[] = [];
 
+  const ownerSaidCancel =
+    /eu:.*(não é isso|nao e isso|não isso|cancela|desmarca|esquece|errado)/i.test(
+      input.latestTexts.join("\n"),
+    );
+  if (ownerSaidCancel) {
+    if (input.openTasks[0]) {
+      actions.push({
+        type: "update_task",
+        taskId: input.openTasks[0].id,
+        patch: { status: "cancelled" },
+        needsConfirm: true,
+        rationale: "última fala do dono corrige/cancela pendência aberta",
+      });
+    }
+    if (input.openCommitments[0] && /cancela|desmarca|não é|nao e|errado/i.test(blob)) {
+      actions.push({
+        type: "update_commitment",
+        commitmentId: input.openCommitments[0].id,
+        patch: { status: "cancelled" },
+        needsConfirm: true,
+        rationale: "última fala do dono indica cancelamento",
+      });
+    }
+    if (actions.length) return actions;
+  }
+
   const done = /(conclu[ií]|feito|já fiz|ja fiz|cancelei|desmarca)/i.test(blob);
   if (done && input.openTasks[0]) {
     actions.push({
@@ -88,21 +121,34 @@ export function decideFromEvidence(input: DecideInput): DecisionAction[] {
   }
 
   const when = extractWhen(blob, input.now);
-  const commitmentish = /(reuni[aã]o|encontro|call|almo[cç]o|caf[eé]|marcar|marca|hor[aá]rio|as \d)/i.test(
-    blob,
-  );
-  const taskish = /(preciso|pend[eê]ncia|lembrar|enviar|pagar|resolver|tarefa|fazer)/i.test(blob);
+  const commitmentish =
+    /(reuni[aã]o|encontro|call|almo[cç]o|caf[eé]|marcar|marca|hor[aá]rio|as \d)/i.test(blob);
 
   if (when && commitmentish) {
-    const title = guessTitle(input.latestTexts, "Compromisso");
-    const existing = input.openCommitments.find((c) => similar(c.title, title));
+    const who = input.personName?.trim() || null;
+    const topicBlob = input.latestTexts.join(" ") || input.briefSummary;
+    let title = craftSecretaryTitle(topicBlob, "commitment");
+    if (who && !title.toLowerCase().includes(who.toLowerCase().split(/\s+/)[0] || who)) {
+      title = title.replace(/\s*—\s*$/, "");
+      if (/^reuni/i.test(title)) title = `${title} com ${who}`;
+      else title = `${title} · ${who}`;
+    }
+    title = title.slice(0, 80);
+
+    const existing =
+      input.openCommitments.find((c) => similar(c.title, title)) ||
+      input.openCommitments.find((c) => {
+        const a = new Date(c.startsAt);
+        return Math.abs(a.getTime() - when.getTime()) < 36 * 60 * 60 * 1000;
+      });
+
     if (existing) {
       actions.push({
         type: "update_commitment",
         commitmentId: existing.id,
         patch: { startsAt: when.toISOString(), title },
         needsConfirm: true,
-        rationale: "mesmo assunto já aberto — atualiza horário em vez de duplicar",
+        rationale: "mesmo assunto/janela já aberto — atualiza em vez de duplicar",
       });
     } else {
       actions.push({
@@ -111,30 +157,14 @@ export function decideFromEvidence(input: DecideInput): DecisionAction[] {
         startsAt: when.toISOString(),
         endsAt: new Date(when.getTime() + 60 * 60 * 1000).toISOString(),
         needsConfirm: true,
-        rationale: "detectou horário/compromisso na conversa",
-      });
-    }
-  } else if (taskish && !when) {
-    const title = guessTitle(input.latestTexts, "Tarefa");
-    const existing = input.openTasks.find((t) => similar(t.title, title));
-    if (existing) {
-      actions.push({
-        type: "update_task",
-        taskId: existing.id,
-        patch: { note: input.latestTexts[0]?.slice(0, 400) },
-        needsConfirm: false,
-        rationale: "tarefa aberta semelhante — anexa contexto, não duplica",
-      });
-    } else {
-      actions.push({
-        type: "create_task",
-        title,
-        dueOn: null,
-        needsConfirm: true,
-        rationale: "detectou pedido/ação sem horário fixo",
+        rationale: who
+          ? `horário claro com ${who}`
+          : "detectou horário/compromisso na conversa",
       });
     }
   }
+
+  // Sem create_task por keyword — direção (eu pedi / me pediram) exige LLM.
 
   if (actions.length === 0) {
     actions.push({
@@ -143,11 +173,6 @@ export function decideFromEvidence(input: DecideInput): DecisionAction[] {
     });
   }
   return actions;
-}
-
-function guessTitle(texts: string[], fallback: string): string {
-  const last = texts.find((t) => t.trim()) || fallback;
-  return last.replace(/\s+/g, " ").trim().slice(0, 120) || fallback;
 }
 
 function similar(a: string, b: string): boolean {
@@ -170,11 +195,15 @@ function similar(a: string, b: string): boolean {
     "marcar",
     "amanha",
     "hoje",
+    "reuniao",
+    "contrato",
+    "fred",
   ]);
   const tokens = (s: string) => s.split(" ").filter((t) => t.length > 3 && !stop.has(t));
   const ta = new Set(tokens(na));
   const tb = tokens(nb);
-  return tb.some((t) => ta.has(t)) || tokens(na).some((t) => nb.includes(t));
+  const hit = tb.filter((t) => ta.has(t)).length;
+  return hit >= 1 || tokens(na).some((t) => nb.includes(t));
 }
 
 function norm(s: string): string {

@@ -39,6 +39,7 @@ export function Agenda() {
                   <strong>{String(c.title)}</strong>
                   <span>
                     {fmtWhen(c.starts_at)}
+                    {c.person_name ? ` · ${String(c.person_name)}` : ""}
                     {Boolean(c.needs_confirm) && <span className="tag tag-due"> confirmar</span>}
                   </span>
                 </div>

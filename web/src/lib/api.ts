@@ -14,6 +14,32 @@ export type TodayResponse = {
   pendingConfirm: TodayItem[];
 };
 
+export type Person = {
+  id: string;
+  phone: string;
+  name: string | null;
+  kind: string;
+  tags: string[];
+  note: string;
+  relation: string;
+  conversation_count?: number;
+  open_commitments?: number;
+  open_tasks?: number;
+};
+
+export type ConversationListItem = Record<string, unknown> & {
+  id: string;
+  briefPreview?: string;
+};
+
+export type ConversationDetail = {
+  conversation: Record<string, unknown>;
+  brief: { summary?: string; open_threads?: string[]; version?: number } | null;
+  messages: Array<Record<string, unknown>>;
+  commitments: Array<Record<string, unknown>>;
+  tasks: Array<Record<string, unknown>>;
+};
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -45,4 +71,18 @@ export const client = {
     api(`/api/commitments/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   patchTask: (id: string, body: Record<string, unknown>) =>
     api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  people: () => api<{ items: Person[] }>("/api/people"),
+  patchPerson: (id: string, body: Record<string, unknown>) =>
+    api(`/api/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  conversations: () => api<{ items: ConversationListItem[] }>("/api/conversations"),
+  conversation: (id: string) => api<ConversationDetail>(`/api/conversations/${id}`),
+  patchConversation: (id: string, body: Record<string, unknown>) =>
+    api(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  resetPending: () =>
+    api<{
+      cancelledCommitments: number;
+      cancelledTasks: number;
+      conversations: number;
+      enqueued: number;
+    }>("/api/ops/reset-pending", { method: "POST", body: "{}" }),
 };

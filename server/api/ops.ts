@@ -12,35 +12,45 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     return withTenant(user.tenantId, async (client) => {
       // Confirmados no dia — itens needs_confirm ficam só em pendingConfirm.
       const commitments = await client.query(
-        `select id, title, status, starts_at, ends_at, needs_confirm, person_id, conversation_id
-           from commitments
-          where tenant_id = $1
-            and needs_confirm = false
-            and starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo')
+        `select c.id, c.title, c.status, c.starts_at, c.ends_at, c.needs_confirm,
+                c.person_id, c.conversation_id, p.name as person_name
+           from commitments c
+           left join people p on p.id = c.person_id
+          where c.tenant_id = $1
+            and c.needs_confirm = false
+            and c.starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo')
                  at time zone 'America/Sao_Paulo'
-            and starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo')
+            and c.starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo')
                  at time zone 'America/Sao_Paulo' + interval '1 day'
-            and status in ('planned', 'confirmed')
-          order by starts_at`,
+            and c.status in ('planned', 'confirmed')
+          order by c.starts_at`,
         [user.tenantId],
       );
       const tasks = await client.query(
-        `select id, title, status, due_on, needs_confirm, person_id, conversation_id
-           from tasks
-          where tenant_id = $1
-            and needs_confirm = false
-            and status in ('todo', 'doing')
-            and (due_on is null or due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
-          order by due_on nulls last, created_at`,
+        `select t.id, t.title, t.status, t.due_on, t.needs_confirm,
+                t.person_id, t.conversation_id, p.name as person_name
+           from tasks t
+           left join people p on p.id = t.person_id
+          where t.tenant_id = $1
+            and t.needs_confirm = false
+            and t.status in ('todo', 'doing')
+            and (t.due_on is null or t.due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
+          order by t.due_on nulls last, t.created_at`,
         [user.tenantId],
       );
       const pending = await client.query(
         `select * from (
-           select id, title, status, starts_at as at, 'commitment' as kind from commitments
-            where tenant_id = $1 and needs_confirm = true and status in ('planned', 'confirmed')
+           select c.id, c.title, c.status, c.starts_at as at, 'commitment' as kind,
+                  c.person_id, c.conversation_id, p.name as person_name
+             from commitments c
+             left join people p on p.id = c.person_id
+            where c.tenant_id = $1 and c.needs_confirm = true and c.status in ('planned', 'confirmed')
            union all
-           select id, title, status, due_on::timestamptz, 'task' from tasks
-            where tenant_id = $1 and needs_confirm = true and status in ('todo', 'doing')
+           select t.id, t.title, t.status, t.due_on::timestamptz, 'task',
+                  t.person_id, t.conversation_id, p.name
+             from tasks t
+             left join people p on p.id = t.person_id
+            where t.tenant_id = $1 and t.needs_confirm = true and t.status in ('todo', 'doing')
          ) p
          order by at nulls last
          limit 30`,
@@ -70,13 +80,14 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
 
     return withTenant(user.tenantId, async (client) => {
       const rows = await client.query(
-        `select id, title, status, starts_at, ends_at, location, note, needs_confirm,
-                person_id, conversation_id
-           from commitments
-          where tenant_id = $1
-            and starts_at >= $2::date
-            and starts_at < ($3::date + interval '1 day')
-          order by starts_at`,
+        `select c.id, c.title, c.status, c.starts_at, c.ends_at, c.location, c.note, c.needs_confirm,
+                c.person_id, c.conversation_id, p.name as person_name
+           from commitments c
+           left join people p on p.id = c.person_id
+          where c.tenant_id = $1
+            and c.starts_at >= $2::date
+            and c.starts_at < ($3::date + interval '1 day')
+          order by c.starts_at`,
         [user.tenantId, from, to],
       );
       return { items: rows.rows };
@@ -132,18 +143,70 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     if (!user) return;
     return withTenant(user.tenantId, async (client) => {
       const rows = await client.query(
-        `select id, title, status, due_on, note, needs_confirm, person_id, conversation_id
-           from tasks
-          where tenant_id = $1 and status in ('todo', 'doing', 'done')
+        `select t.id, t.title, t.status, t.due_on, t.note, t.needs_confirm,
+                t.person_id, t.conversation_id, p.name as person_name
+           from tasks t
+           left join people p on p.id = t.person_id
+          where t.tenant_id = $1 and t.status in ('todo', 'doing', 'done')
           order by
-            case status when 'todo' then 0 when 'doing' then 1 else 2 end,
-            needs_confirm desc,
-            due_on nulls last,
-            created_at desc
+            case t.status when 'todo' then 0 when 'doing' then 1 else 2 end,
+            t.needs_confirm desc,
+            t.due_on nulls last,
+            t.created_at desc
           limit 100`,
         [user.tenantId],
       );
       return { items: rows.rows };
+    });
+  });
+
+  /** Descarta propostas ruins e reprocessa conversas com o motor novo. */
+  app.post("/api/ops/reset-pending", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    return withTenant(user.tenantId, async (client) => {
+      const c = await client.query(
+        `update commitments set status = 'cancelled', needs_confirm = false, updated_at = now()
+          where tenant_id = $1 and needs_confirm = true and status in ('planned','confirmed')
+          returning id, conversation_id`,
+        [user.tenantId],
+      );
+      const t = await client.query(
+        `update tasks set status = 'cancelled', needs_confirm = false, updated_at = now()
+          where tenant_id = $1 and needs_confirm = true and status in ('todo','doing')
+          returning id, conversation_id`,
+        [user.tenantId],
+      );
+      const convIds = new Set<string>();
+      for (const row of [...c.rows, ...t.rows]) {
+        if (row.conversation_id) convIds.add(String(row.conversation_id));
+      }
+      // Também reprocessa conversas recentes mesmo sem pending.
+      const recent = await client.query<{ id: string }>(
+        `select id from conversations where tenant_id = $1
+          order by last_message_at desc limit 40`,
+        [user.tenantId],
+      );
+      for (const r of recent.rows) convIds.add(r.id);
+
+      let enqueued = 0;
+      for (const id of convIds) {
+        const outcome = await enqueueJobSafe(client, {
+          tenantId: user.tenantId,
+          type: "organize_and_decide",
+          payload: { conversationId: id, reason: "reset_pending" },
+          dedupeKey: `organize:${id}`,
+          runAt: new Date(Date.now() + 2_000),
+          bumpExistingRunAt: true,
+        });
+        if (outcome === "inserted" || outcome === "bumped") enqueued += 1;
+      }
+      return {
+        cancelledCommitments: c.rowCount ?? c.rows.length,
+        cancelledTasks: t.rowCount ?? t.rows.length,
+        conversations: convIds.size,
+        enqueued,
+      };
     });
   });
 
