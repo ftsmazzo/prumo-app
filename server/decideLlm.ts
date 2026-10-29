@@ -1,5 +1,7 @@
+import type pg from "pg";
 import { chatJson, openRouterConfigured } from "./ai/openrouter.js";
 import type { DecideInput, DecisionAction } from "./decide.js";
+import { recordTokenUsage } from "./tokens.js";
 
 type LlmPayload = {
   actions?: Array<{
@@ -16,11 +18,19 @@ type LlmPayload = {
   }>;
 };
 
+export type DecideLlmContext = {
+  client: pg.PoolClient;
+  tenantId: string;
+  conversationId?: string | null;
+  messageId?: string | null;
+};
+
 const SYSTEM = `Você é o motor operacional do Prumo (modo Pessoal).
 Recebe o fichamento de UMA conversa WhatsApp e itens já abertos.
 Decida ZERO ou mais ações. Preferir atualizar item aberto a criar duplicata.
 Só proponha compromisso se houver horário/data claros. Só proponha tarefa se houver ação pendente clara.
 Conversa social, elogio, "tudo bem", bronca familiar, sticker → actions: [].
+title SEMPRE curto de secretária (ex.: "Reunião contrato", "Enviar proposta") — NUNCA cole a mensagem inteira.
 Responda JSON: {"actions":[...]}
 Cada action: type create_commitment|update_commitment|create_task|update_task,
 title?, startsAt? (ISO), endsAt?, dueOn? (YYYY-MM-DD), commitmentId?, taskId?,
@@ -28,7 +38,10 @@ status? (planned|confirmed|done|cancelled|todo|doing), note?, rationale (curto p
 Sempre needsConfirm implícito: o sistema marca confirmar.`;
 
 /** LLM só quando regras não acharão nada operacional. */
-export async function decideWithLlm(input: DecideInput): Promise<DecisionAction[] | null> {
+export async function decideWithLlm(
+  input: DecideInput,
+  ctx?: DecideLlmContext,
+): Promise<DecisionAction[] | null> {
   if (!openRouterConfigured()) return null;
 
   const user = JSON.stringify({
@@ -41,11 +54,22 @@ export async function decideWithLlm(input: DecideInput): Promise<DecisionAction[
   });
 
   try {
-    const { data } = await chatJson<LlmPayload>({
+    const { data, model, usage } = await chatJson<LlmPayload>({
       system: SYSTEM,
       user,
       temperature: 0.1,
     });
+    if (ctx) {
+      await recordTokenUsage(ctx.client, {
+        tenantId: ctx.tenantId,
+        conversationId: ctx.conversationId ?? null,
+        messageId: ctx.messageId ?? null,
+        purpose: "decide_llm",
+        model,
+        prompt: usage?.prompt ?? 0,
+        completion: usage?.completion ?? 0,
+      });
+    }
     return normalize(data, input);
   } catch (err) {
     console.warn("[decideLlm] falhou", err instanceof Error ? err.message : err);

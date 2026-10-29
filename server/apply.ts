@@ -1,5 +1,6 @@
 import type pg from "pg";
 import type { DecisionAction } from "./decide.js";
+import { ensureSecretaryTitle } from "./polish.js";
 
 export type AppliedDecision = {
   eventId: string;
@@ -50,23 +51,26 @@ export async function applyDecisions(
     const status = needsConfirm ? "proposed" : "applied";
 
     if (action.type === "create_commitment") {
+      const source = [action.title, action.rationale].filter(Boolean).join(" — ");
+      const title = ensureSecretaryTitle(action.title, source, "commitment");
       // Canônico no SQL com needs_confirm — painel/agente confirmam; não fica só no event.
       const r = await client.query<{ id: string }>(
         `insert into commitments (
            tenant_id, person_id, conversation_id, source_message_id,
-           title, starts_at, ends_at, status, needs_confirm
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           title, starts_at, ends_at, status, needs_confirm, note
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          returning id`,
         [
           opts.tenantId,
           opts.personId,
           opts.conversationId,
           opts.messageId,
-          action.title,
+          title,
           action.startsAt,
           action.endsAt ?? null,
           needsConfirm ? "planned" : "confirmed",
           needsConfirm,
+          action.title !== title ? action.title.slice(0, 500) : "",
         ],
       );
       const entityId = r.rows[0].id;
@@ -129,20 +133,23 @@ export async function applyDecisions(
     }
 
     if (action.type === "create_task") {
+      const source = [action.title, action.rationale].filter(Boolean).join(" — ");
+      const title = ensureSecretaryTitle(action.title, source, "task");
       const r = await client.query<{ id: string }>(
         `insert into tasks (
            tenant_id, person_id, conversation_id, source_message_id,
-           title, due_on, status, needs_confirm
-         ) values ($1,$2,$3,$4,$5,$6::date,'todo',$7)
+           title, due_on, status, needs_confirm, note
+         ) values ($1,$2,$3,$4,$5,$6::date,'todo',$7,$8)
          returning id`,
         [
           opts.tenantId,
           opts.personId,
           opts.conversationId,
           opts.messageId,
-          action.title,
+          title,
           action.dueOn ?? null,
           needsConfirm,
+          action.title !== title ? action.title.slice(0, 500) : "",
         ],
       );
       const entityId = r.rows[0].id;

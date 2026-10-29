@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { ensureSecretaryTitle } from "../polish.js";
 
 export type ToolResult = { ok: true; text: string; evidence: string } | { ok: false; text: string };
 
@@ -7,38 +8,64 @@ export async function toolToday(
   client: pg.PoolClient,
   tenantId: string,
 ): Promise<ToolResult> {
-  const commitments = await client.query<{ title: string; starts_at: Date; needs_confirm: boolean }>(
-    `select title, starts_at, needs_confirm from commitments
+  const pending = await client.query<{
+    kind: string;
+    title: string;
+    at: Date | null;
+  }>(
+    `select * from (
+       select 'compromisso' as kind, title, starts_at as at from commitments
+        where tenant_id = $1 and needs_confirm = true and status in ('planned', 'confirmed')
+       union all
+       select 'tarefa', title, due_on::timestamptz from tasks
+        where tenant_id = $1 and needs_confirm = true and status in ('todo', 'doing')
+     ) p order by at nulls last limit 10`,
+    [tenantId],
+  );
+
+  const commitments = await client.query<{ title: string; starts_at: Date }>(
+    `select title, starts_at from commitments
       where tenant_id = $1
+        and needs_confirm = false
         and starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'
         and starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' + interval '1 day'
         and status in ('planned', 'confirmed')
       order by starts_at`,
     [tenantId],
   );
-  const tasks = await client.query<{ title: string; status: string; due_on: string | null }>(
-    `select title, status, due_on::text from tasks
-      where tenant_id = $1 and status in ('todo', 'doing')
-      order by needs_confirm desc, due_on nulls last
-      limit 15`,
+  const tasks = await client.query<{ title: string; due_on: string | null }>(
+    `select title, due_on::text from tasks
+      where tenant_id = $1
+        and needs_confirm = false
+        and status in ('todo', 'doing')
+        and (due_on is null or due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
+      order by due_on nulls last
+      limit 12`,
     [tenantId],
   );
 
   const lines: string[] = [];
-  if (commitments.rows.length === 0) lines.push("Hoje sem compromissos.");
-  else {
-    lines.push("Compromissos de hoje:");
+  if (pending.rows.length) {
+    lines.push("Para confirmar:");
+    for (const p of pending.rows) {
+      lines.push(`- [${p.kind}] ${p.title}`);
+    }
+  }
+  if (commitments.rows.length === 0) {
+    lines.push(pending.rows.length ? "Hoje (confirmados): nenhum." : "Hoje sem compromissos confirmados.");
+  } else {
+    lines.push("Hoje:");
     for (const c of commitments.rows) {
       const t = new Date(c.starts_at).toLocaleTimeString("pt-BR", {
         hour: "2-digit",
         minute: "2-digit",
         timeZone: "America/Sao_Paulo",
       });
-      lines.push(`- ${t} ${c.title}${c.needs_confirm ? " (confirmar)" : ""}`);
+      lines.push(`- ${t} ${c.title}`);
     }
   }
   if (tasks.rows.length) {
-    lines.push("Tarefas abertas:");
+    lines.push("Tarefas:");
     for (const t of tasks.rows) {
       lines.push(`- ${t.title}${t.due_on ? ` · ${t.due_on}` : ""}`);
     }
@@ -71,7 +98,8 @@ export async function toolRescheduleTomorrow(
       where id = $1 and tenant_id = $2`,
     [row.rows[0].id, tenantId, next.toISOString()],
   );
-  const text = `Remarquei "${row.rows[0].title}" para ${next.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`;
+  const when = next.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const text = `Remarquei "${row.rows[0].title}" para ${when}.`;
   return { ok: true, text, evidence: text };
 }
 
@@ -94,7 +122,7 @@ export async function toolCompleteTask(
       where id = $1 and tenant_id = $2`,
     [row.rows[0].id, tenantId],
   );
-  const text = `Concluí a tarefa "${row.rows[0].title}".`;
+  const text = `Concluí "${row.rows[0].title}".`;
   return { ok: true, text, evidence: text };
 }
 
@@ -114,7 +142,7 @@ export async function toolConfirmPending(
         where id = $1 and tenant_id = $2`,
       [c.rows[0].id, tenantId],
     );
-    const text = `Confirmei o compromisso "${c.rows[0].title}".`;
+    const text = `Confirmado: "${c.rows[0].title}".`;
     return { ok: true, text, evidence: text };
   }
   const t = await client.query<{ id: string; title: string }>(
@@ -129,8 +157,56 @@ export async function toolConfirmPending(
         where id = $1 and tenant_id = $2`,
       [t.rows[0].id, tenantId],
     );
-    const text = `Confirmei a tarefa "${t.rows[0].title}".`;
+    const text = `Confirmada a tarefa "${t.rows[0].title}".`;
     return { ok: true, text, evidence: text };
   }
   return { ok: false, text: "Nada pendente para confirmar." };
+}
+
+export async function toolCreateCommitment(
+  client: pg.PoolClient,
+  tenantId: string,
+  opts: { title: string; startsAt: string; endsAt?: string | null },
+): Promise<ToolResult> {
+  const title = ensureSecretaryTitle(opts.title, opts.title, "commitment");
+  const starts = Date.parse(opts.startsAt);
+  if (Number.isNaN(starts)) return { ok: false, text: "Não entendi a data/hora do compromisso." };
+  const endsAt = opts.endsAt ?? new Date(starts + 60 * 60 * 1000).toISOString();
+  const r = await client.query<{ id: string }>(
+    `insert into commitments (
+       tenant_id, title, starts_at, ends_at, status, needs_confirm, note
+     ) values ($1,$2,$3,$4,'planned',true,$5)
+     returning id`,
+    [tenantId, title, new Date(starts).toISOString(), endsAt, opts.title.slice(0, 500)],
+  );
+  const when = new Date(starts).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const text = `Anotei a proposta "${title}" em ${when}. Responda confirmar para liberar na agenda.`;
+  return { ok: true, text, evidence: `${text}\nid=${r.rows[0].id}` };
+}
+
+function parseDueOn(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const t = Date.parse(`${s}T12:00:00Z`);
+  if (Number.isNaN(t)) return null;
+  return s;
+}
+
+export async function toolCreateTask(
+  client: pg.PoolClient,
+  tenantId: string,
+  opts: { title: string; dueOn?: string | null },
+): Promise<ToolResult> {
+  const title = ensureSecretaryTitle(opts.title, opts.title, "task");
+  const dueOn = parseDueOn(opts.dueOn);
+  const r = await client.query<{ id: string }>(
+    `insert into tasks (
+       tenant_id, title, due_on, status, needs_confirm, note
+     ) values ($1,$2,$3::date,'todo',true,$4)
+     returning id`,
+    [tenantId, title, dueOn, opts.title.slice(0, 500)],
+  );
+  const text = `Anotei a proposta "${title}"${dueOn ? ` (prazo ${dueOn})` : ""}. Responda confirmar para liberar.`;
+  return { ok: true, text, evidence: `${text}\nid=${r.rows[0].id}` };
 }

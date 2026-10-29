@@ -1,11 +1,16 @@
 import type pg from "pg";
+import { chatJson, openRouterConfigured } from "../ai/openrouter.js";
 import { enqueueJobSafe } from "../jobs.js";
+import { recordTokenUsage } from "../tokens.js";
 import { gateAgentReply } from "./gates.js";
 import {
   toolCompleteTask,
   toolConfirmPending,
+  toolCreateCommitment,
+  toolCreateTask,
   toolRescheduleTomorrow,
   toolToday,
+  type ToolResult,
 } from "./tools.js";
 
 export type AgentTurnResult =
@@ -25,7 +30,32 @@ export function phonesMatch(a: string, b: string): boolean {
   return ta === tb || da.endsWith(tb) || db.endsWith(ta);
 }
 
-/** Processa mensagem no canal agent_*: whitelist → tools SQL → gates → outbound. */
+type LlmPlan = {
+  reply?: string;
+  tool?: string | null;
+  title?: string;
+  startsAt?: string;
+  dueOn?: string | null;
+  hint?: string;
+};
+
+/** Evidência do gate = comando do usuário + saída SQL das tools (nunca a reply livre da LLM). */
+type ResolvedTurn = { text: string; evidence: string };
+
+const SYSTEM = `Você é o Prumo, secretário pessoal no WhatsApp. Responda em português curto e natural (não robótico).
+Escolha UMA ferramenta SQL ou só responda.
+JSON: {"tool":"today"|"confirm"|"reschedule"|"complete"|"create_commitment"|"create_task"|null,"title":"...","startsAt":"ISO se create_commitment","dueOn":"YYYY-MM-DD se create_task","hint":"trecho para achar item","reply":"texto se tool=null"}
+Regras:
+- Perguntas sobre agenda/tarefas do dia → today
+- Confirmar o que está pendente → confirm
+- Remarcar → reschedule (+ hint)
+- Concluir tarefa → complete (+ hint)
+- Criar compromisso com horário → create_commitment (title curto tipo secretária + startsAt ISO America/Sao_Paulo)
+- Criar tarefa/ação → create_task (title curto; dueOn só YYYY-MM-DD se souber)
+- Sem ação clara → tool null e reply útil
+Nunca invente telefone, link ou valor.`;
+
+/** Processa mensagem no canal agent_*: whitelist → atalho ou LN → tools → gates → outbound. */
 export async function runAgentTurn(
   client: pg.PoolClient,
   opts: {
@@ -48,35 +78,10 @@ export async function runAgentTurn(
   const text = (opts.text || "").trim();
   if (!text) return { status: "ignored", reason: "empty" };
 
-  const lower = text.toLowerCase();
-  let result: { ok: boolean; text: string; evidence?: string };
-
-  if (/^(hoje|agenda)\b/.test(lower) || /o que tenho/.test(lower)) {
-    result = await toolToday(client, opts.tenantId);
-  } else if (/^confirm/.test(lower) || lower === "1") {
-    result = await toolConfirmPending(client, opts.tenantId);
-  } else if (/remarca/.test(lower)) {
-    const hint = text.replace(/remarca(r)?|para|amanh[aã]|\+1\s*dia|compromisso/gi, " ").trim();
-    result = await toolRescheduleTomorrow(client, opts.tenantId, hint || undefined);
-  } else if (/conclu|finalize/.test(lower)) {
-    const hint = text.replace(/conclu(i|ir)?|a tarefa|finalize/gi, " ").trim();
-    result = await toolCompleteTask(client, opts.tenantId, hint || undefined);
-  } else if (/ajuda|help/.test(lower)) {
-    result = {
-      ok: true,
-      text: "Comandos: hoje · confirmar · remarcar [nome] · concluir [tarefa]",
-      evidence: "comandos locais",
-    };
-  } else {
-    result = {
-      ok: false,
-      text: "Não entendi. Digite ajuda, hoje, confirmar, remarcar ou concluir.",
-    };
-  }
-
+  const result = await resolveTurn(client, opts.tenantId, text, opts.messageId);
   const gated = gateAgentReply({
     reply: result.text,
-    evidenceText: `${text}\n${result.evidence ?? result.text}`,
+    evidenceText: `${text}\n${result.evidence}`,
   });
 
   const out = await client.query<{ id: string }>(
@@ -93,4 +98,109 @@ export async function runAgentTurn(
   });
 
   return { status: "replied", body: gated.text, outboundId: out.rows[0].id };
+}
+
+function fromTool(r: ToolResult): ResolvedTurn {
+  if (r.ok) return { text: r.text, evidence: r.evidence };
+  return { text: r.text, evidence: "" };
+}
+
+async function resolveTurn(
+  client: pg.PoolClient,
+  tenantId: string,
+  text: string,
+  messageId: string,
+): Promise<ResolvedTurn> {
+  const lower = text.toLowerCase();
+
+  // Atalhos baratos (sempre, com ou sem OpenRouter)
+  if (/^(hoje|agenda)\b/.test(lower) || /o que tenho/.test(lower)) {
+    return fromTool(await toolToday(client, tenantId));
+  }
+  if (/^confirm/.test(lower) || lower === "1") {
+    return fromTool(await toolConfirmPending(client, tenantId));
+  }
+  if (/remarca/.test(lower)) {
+    return fromTool(
+      await toolRescheduleTomorrow(
+        client,
+        tenantId,
+        text.replace(/remarca(r)?|para|amanh[aã]|\+1\s*dia|compromisso/gi, " ").trim() ||
+          undefined,
+      ),
+    );
+  }
+  if (/conclu|finalize/.test(lower)) {
+    return fromTool(
+      await toolCompleteTask(
+        client,
+        tenantId,
+        text.replace(/conclu(i|ir)?|a tarefa|finalize/gi, " ").trim() || undefined,
+      ),
+    );
+  }
+  if (/^ajuda$|^help$/.test(lower)) {
+    return {
+      text: "Pode falar natural: o que tenho hoje, confirma, remarca X, conclui Y, anota reunião amanhã 15h, cria tarefa…",
+      evidence: "",
+    };
+  }
+
+  if (!openRouterConfigured()) {
+    return {
+      text: "Não entendi. Digite ajuda, hoje, confirmar, remarcar ou concluir.",
+      evidence: "",
+    };
+  }
+
+  try {
+    const { data, model, usage } = await chatJson<LlmPlan>({
+      system: SYSTEM,
+      user: JSON.stringify({ now: new Date().toISOString(), timezone: "America/Sao_Paulo", text }),
+      temperature: 0.2,
+    });
+    await recordTokenUsage(client, {
+      tenantId,
+      messageId,
+      purpose: "agent_turn",
+      model,
+      prompt: usage?.prompt ?? 0,
+      completion: usage?.completion ?? 0,
+    });
+
+    const tool = data.tool ?? null;
+    if (tool === "today") return fromTool(await toolToday(client, tenantId));
+    if (tool === "confirm") return fromTool(await toolConfirmPending(client, tenantId));
+    if (tool === "reschedule") {
+      return fromTool(await toolRescheduleTomorrow(client, tenantId, data.hint || undefined));
+    }
+    if (tool === "complete") {
+      return fromTool(await toolCompleteTask(client, tenantId, data.hint || undefined));
+    }
+    if (tool === "create_commitment" && data.title && data.startsAt) {
+      return fromTool(
+        await toolCreateCommitment(client, tenantId, {
+          title: data.title,
+          startsAt: data.startsAt,
+        }),
+      );
+    }
+    if (tool === "create_task" && data.title) {
+      return fromTool(
+        await toolCreateTask(client, tenantId, {
+          title: data.title,
+          dueOn: data.dueOn ?? null,
+        }),
+      );
+    }
+    const reply = (data.reply || "").trim();
+    if (reply) return { text: reply, evidence: "" };
+  } catch (err) {
+    console.warn("[agent] LN falhou", err instanceof Error ? err.message : err);
+  }
+
+  return {
+    text: "Não consegui processar agora. Tente: hoje, confirmar, ou diga o que quer anotar.",
+    evidence: "",
+  };
 }

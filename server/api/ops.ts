@@ -10,12 +10,16 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     if (!user) return;
 
     return withTenant(user.tenantId, async (client) => {
+      // Confirmados no dia — itens needs_confirm ficam só em pendingConfirm.
       const commitments = await client.query(
         `select id, title, status, starts_at, ends_at, needs_confirm, person_id, conversation_id
            from commitments
           where tenant_id = $1
-            and starts_at >= date_trunc('day', now())
-            and starts_at < date_trunc('day', now()) + interval '1 day'
+            and needs_confirm = false
+            and starts_at >= date_trunc('day', now() at time zone 'America/Sao_Paulo')
+                 at time zone 'America/Sao_Paulo'
+            and starts_at < date_trunc('day', now() at time zone 'America/Sao_Paulo')
+                 at time zone 'America/Sao_Paulo' + interval '1 day'
             and status in ('planned', 'confirmed')
           order by starts_at`,
         [user.tenantId],
@@ -24,9 +28,10 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
         `select id, title, status, due_on, needs_confirm, person_id, conversation_id
            from tasks
           where tenant_id = $1
+            and needs_confirm = false
             and status in ('todo', 'doing')
             and (due_on is null or due_on <= (now() at time zone 'America/Sao_Paulo')::date + 1)
-          order by needs_confirm desc, due_on nulls last, created_at`,
+          order by due_on nulls last, created_at`,
         [user.tenantId],
       );
       const pending = await client.query(
@@ -193,6 +198,94 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!result.ok) return reply.code(404).send({ error: "not_found_or_not_proposed" });
       return result;
+    });
+  });
+
+  /** Métrica de token do piloto (fase 5). */
+  app.get("/api/ops/tokens", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    return withTenant(user.tenantId, async (client) => {
+      const summary = await client.query<{
+        purpose: string;
+        calls: string;
+        prompt_tokens: string;
+        completion_tokens: string;
+        total_tokens: string;
+      }>(
+        `select purpose,
+                count(*)::text as calls,
+                coalesce(sum(prompt_tokens),0)::text as prompt_tokens,
+                coalesce(sum(completion_tokens),0)::text as completion_tokens,
+                coalesce(sum(total_tokens),0)::text as total_tokens
+           from token_usage
+          where tenant_id = $1
+            and created_at >= now() - interval '7 days'
+          group by purpose
+          order by purpose`,
+        [user.tenantId],
+      );
+      const recent = await client.query(
+        `select purpose, model, prompt_tokens, completion_tokens, total_tokens, created_at
+           from token_usage
+          where tenant_id = $1
+          order by created_at desc
+          limit 20`,
+        [user.tenantId],
+      );
+      return { last7Days: summary.rows, recent: recent.rows };
+    });
+  });
+
+  /** Reescreve títulos que ainda são dump de mensagem (fase 5 — calibrar). */
+  app.post("/api/ops/polish-titles", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    const { ensureSecretaryTitle, isMessageDump } = await import("../polish.js");
+    return withTenant(user.tenantId, async (client) => {
+      const commitments = await client.query<{ id: string; title: string; note: string }>(
+        `select id, title, note from commitments
+          where tenant_id = $1
+            and (char_length(title) > 72 or title ~ '^.+:\\s')
+          order by updated_at desc
+          limit 200`,
+        [user.tenantId],
+      );
+      let c = 0;
+      for (const row of commitments.rows) {
+        const source = row.note || row.title;
+        if (!isMessageDump(row.title, source) && row.title.length <= 72) continue;
+        const title = ensureSecretaryTitle(row.title, source, "commitment");
+        if (title === row.title) continue;
+        await client.query(
+          `update commitments set title = $3, note = case when note = '' then $4 else note end, updated_at = now()
+            where id = $1 and tenant_id = $2`,
+          [row.id, user.tenantId, title, row.title.slice(0, 500)],
+        );
+        c += 1;
+      }
+      const tasks = await client.query<{ id: string; title: string; note: string }>(
+        `select id, title, note from tasks
+          where tenant_id = $1
+            and (char_length(title) > 72 or title ~ '^.+:\\s')
+          order by updated_at desc
+          limit 200`,
+        [user.tenantId],
+      );
+      let t = 0;
+      for (const row of tasks.rows) {
+        const source = row.note || row.title;
+        if (!isMessageDump(row.title, source) && row.title.length <= 72) continue;
+        const title = ensureSecretaryTitle(row.title, source, "task");
+        if (title === row.title) continue;
+        await client.query(
+          `update tasks set title = $3, note = case when note = '' then $4 else note end, updated_at = now()
+            where id = $1 and tenant_id = $2`,
+          [row.id, user.tenantId, title, row.title.slice(0, 500)],
+        );
+        t += 1;
+      }
+      return { commitments: c, tasks: t };
     });
   });
 

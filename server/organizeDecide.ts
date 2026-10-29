@@ -86,7 +86,12 @@ export async function organizeAndDecide(
 
   const onlyNoop = actions.length === 1 && actions[0]?.type === "noop";
   if (onlyNoop) {
-    const llmActions = await decideWithLlm(decideInput);
+    const llmActions = await decideWithLlm(decideInput, {
+      client,
+      tenantId: opts.tenantId,
+      conversationId: opts.conversationId,
+      messageId: opts.messageId ?? null,
+    });
     if (llmActions && llmActions.length > 0) {
       actions = llmActions;
       source = "llm";
