@@ -84,19 +84,30 @@ export async function ficharConversation(
       temperature: 0.15,
       timeoutMs: 35_000,
     });
-    await recordTokenUsage(client, {
-      tenantId: opts.tenantId,
-      conversationId: opts.conversationId,
-      messageId: opts.messageId ?? null,
-      purpose: "fichar",
-      model,
-      prompt: usage?.prompt ?? 0,
-      completion: usage?.completion ?? 0,
-    });
+    try {
+      await recordTokenUsage(client, {
+        tenantId: opts.tenantId,
+        conversationId: opts.conversationId,
+        messageId: opts.messageId ?? null,
+        purpose: "fichar",
+        model,
+        prompt: usage?.prompt ?? 0,
+        completion: usage?.completion ?? 0,
+      });
+    } catch (tokenErr) {
+      console.warn(
+        "[fichar] token_usage falhou (resumo mantido)",
+        tokenErr instanceof Error ? tokenErr.message : tokenErr,
+      );
+    }
 
     const summary = cleanSummary(data.summary || "");
     const micro = cleanMicro(data.microSummary || data.summary || "");
     if (isBadSummary(summary) && isBadSummary(micro)) {
+      console.warn("[fichar] LLM respondeu mas resumo inválido", {
+        summary: summary.slice(0, 80),
+        micro: micro.slice(0, 80),
+      });
       return fallbackFichado(thread, heuristicTags);
     }
 

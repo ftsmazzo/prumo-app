@@ -170,6 +170,7 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
         limit: z.number().int().min(1).max(40).optional(),
       })
       .safeParse(req.body ?? {});
+    const { openRouterConfigured } = await import("../ai/openrouter.js");
     return withTenant(user.tenantId, async (client) => {
       const { refreshConversationBrief } = await import("../organize.js");
       let ids: string[] = [];
@@ -196,7 +197,11 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
           source: brief.ficharSource,
         });
       }
-      return { count: results.length, results };
+      return {
+        count: results.length,
+        openRouter: openRouterConfigured(),
+        results,
+      };
     });
   });
 
