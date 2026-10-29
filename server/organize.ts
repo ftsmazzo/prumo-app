@@ -1,5 +1,6 @@
 import type pg from "pg";
-import { cleanTags, suggestTagsFromText } from "./contacts.js";
+import { cleanTags } from "./contacts.js";
+import { ficharConversation } from "./fichar.js";
 
 export type BriefUpdate = {
   summary: string;
@@ -7,16 +8,23 @@ export type BriefUpdate = {
   openThreads: string[];
   recentTurns: string[];
   tags: string[];
-  openItems: Array<{ kind: string; label: string }>;
+  openItems: Array<{ kind: string; label: string; ownerAction?: boolean }>;
   recentCount: number;
+  ficharSource: string;
 };
 
 /**
- * Fichamento: histórico bruto fica em messages; aqui vai evidência curta para decidir/agente.
+ * Fichamento: histórico bruto fica em messages.
+ * summary/micro_summary vêm do Fichador (LLM) — nunca cola de mensagem.
  */
 export async function refreshConversationBrief(
   client: pg.PoolClient,
-  opts: { tenantId: string; conversationId: string; limit?: number },
+  opts: {
+    tenantId: string;
+    conversationId: string;
+    limit?: number;
+    messageId?: string | null;
+  },
 ): Promise<BriefUpdate> {
   const limit = opts.limit ?? 80;
   const msgs = await client.query<{
@@ -40,12 +48,7 @@ export async function refreshConversationBrief(
     return `[${when}] ${who}: ${String(m.text).replace(/\s+/g, " ").slice(0, 280)}`;
   });
 
-  const summary =
-    lines.length === 0
-      ? "(sem texto ainda)"
-      : lines.slice(-20).join("\n").slice(0, 5000);
-
-  const recentTurns = chronological.slice(-12).map((m) => {
+  const recentTurns = chronological.slice(-14).map((m) => {
     const who = m.direction === "out" ? "eu" : "contato";
     return `${who}: ${String(m.text).replace(/\s+/g, " ").slice(0, 220)}`;
   });
@@ -55,22 +58,48 @@ export async function refreshConversationBrief(
     .slice(-5)
     .map((m) => String(m.text).replace(/\s+/g, " ").slice(0, 160));
 
-  const openItems = extractOpenItems(recentTurns);
-  const microSummary = craftMicroSummary(recentTurns, openItems);
-  const suggested = suggestTagsFromText([...recentTurns, summary].join("\n"));
-
-  const person = await client.query<{ person_id: string | null; tags: string[] }>(
-    `select c.person_id, c.tags from conversations c where c.id = $1`,
+  const meta = await client.query<{
+    person_id: string | null;
+    tags: string[];
+    person_name: string | null;
+    peer_push_name: string | null;
+    prev_summary: string | null;
+    prev_micro: string | null;
+  }>(
+    `select c.person_id, c.tags, p.name as person_name, c.peer_push_name,
+            b.summary as prev_summary, coalesce(c.micro_summary, b.micro_summary) as prev_micro
+       from conversations c
+       left join people p on p.id = c.person_id
+       left join conversation_briefs b on b.conversation_id = c.id
+      where c.id = $1`,
     [opts.conversationId],
   );
-  const existingTags = person.rows[0]?.tags ?? [];
-  const tags = cleanTags([...existingTags, ...suggested]);
+
+  const personName =
+    meta.rows[0]?.person_name?.trim() || meta.rows[0]?.peer_push_name?.trim() || null;
+
+  const fichado = await ficharConversation(client, {
+    tenantId: opts.tenantId,
+    conversationId: opts.conversationId,
+    personName,
+    threadLines: lines,
+    previousSummary: meta.rows[0]?.prev_summary,
+    previousMicro: meta.rows[0]?.prev_micro,
+    messageId: opts.messageId ?? null,
+  });
+
+  const existingTags = meta.rows[0]?.tags ?? [];
+  const tags = cleanTags([...existingTags, ...fichado.tags]);
 
   const payload = {
     recentCount: chronological.length,
     recentTurns,
-    openItems,
-    themes: openItems.map((i) => ({ label: i.label, status: "open" })),
+    openItems: fichado.openItems,
+    themes: fichado.themes,
+    tone: fichado.tone,
+    ficharSource: fichado.source,
+    // Transcript curto só como evidência interna — UI mostra summary LLM.
+    transcriptTail: lines.slice(-24),
     updatedFrom: "organize",
   };
 
@@ -89,9 +118,9 @@ export async function refreshConversationBrief(
     [
       opts.tenantId,
       opts.conversationId,
-      person.rows[0]?.person_id ?? null,
-      summary,
-      microSummary,
+      meta.rows[0]?.person_id ?? null,
+      fichado.summary,
+      fichado.microSummary,
       openThreads,
       JSON.stringify(payload),
     ],
@@ -100,56 +129,20 @@ export async function refreshConversationBrief(
   await client.query(
     `update conversations
         set micro_summary = $3,
-            tags = case
-              when cardinality(tags) = 0 then $4::text[]
-              else (select array_agg(distinct x) from unnest(tags || $4::text[]) as x)
-            end,
+            tags = $4::text[],
             updated_at = now()
       where id = $1 and tenant_id = $2`,
-    [opts.conversationId, opts.tenantId, microSummary, tags],
+    [opts.conversationId, opts.tenantId, fichado.microSummary, tags],
   );
 
   return {
-    summary,
-    microSummary,
+    summary: fichado.summary,
+    microSummary: fichado.microSummary,
     openThreads,
     recentTurns,
     tags,
-    openItems,
+    openItems: fichado.openItems,
     recentCount: chronological.length,
+    ficharSource: fichado.source,
   };
-}
-
-function extractOpenItems(
-  turns: string[],
-): Array<{ kind: string; label: string }> {
-  const items: Array<{ kind: string; label: string }> = [];
-  const blob = turns.join("\n");
-  if (/reuni|marcar|amanh[aã].*\d|às \d|as \d/i.test(blob)) {
-    items.push({ kind: "maybe_meeting", label: "possível reunião/horário" });
-  }
-  if (/eu:.*(manda|envia|preciso que você|me passa)/i.test(blob)) {
-    items.push({ kind: "followup", label: "aguardando resposta do contato" });
-  }
-  if (/contato:.*(preciso|pode|envia|manda|lembra)/i.test(blob)) {
-    items.push({ kind: "followup", label: "pedido do contato a você" });
-  }
-  if (/boleto|pix|nota fiscal|pagar/i.test(blob)) {
-    items.push({ kind: "note", label: "tema financeiro citado" });
-  }
-  return items.slice(0, 5);
-}
-
-/** Micro-resumo: referência curta para o agente, não dump. */
-function craftMicroSummary(
-  turns: string[],
-  openItems: Array<{ kind: string; label: string }>,
-): string {
-  if (turns.length === 0) return "";
-  const last = turns.slice(-4);
-  const head = last.map((t) => t.replace(/^(eu|contato):\s*/i, "").slice(0, 90)).join(" → ");
-  const pend = openItems.length
-    ? ` Pendências: ${openItems.map((i) => i.label).join("; ")}.`
-    : "";
-  return `${head}.${pend}`.replace(/\s+/g, " ").trim().slice(0, 320);
 }

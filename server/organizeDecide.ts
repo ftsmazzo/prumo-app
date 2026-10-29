@@ -21,6 +21,7 @@ export async function organizeAndDecide(
   const brief = await refreshConversationBrief(client, {
     tenantId: opts.tenantId,
     conversationId: opts.conversationId,
+    messageId: opts.messageId ?? null,
   });
 
   const conv = await client.query<{
@@ -75,10 +76,24 @@ export async function organizeAndDecide(
     [opts.tenantId, opts.conversationId],
   );
 
+  const openItemsText = brief.openItems
+    .map(
+      (i) =>
+        `- [${i.kind}] ${i.label}${i.ownerAction ? " (ação SUA)" : " (não é ação sua)"}`,
+    )
+    .join("\n");
+
   const decideInput = {
     timezone,
     now: new Date(),
-    briefSummary: [brief.microSummary, brief.summary].filter(Boolean).join("\n---\n"),
+    // Fichamento LLM primeiro; turns só como evidência auxiliar (não título).
+    briefSummary: [
+      `MICRO: ${brief.microSummary}`,
+      `RESUMO: ${brief.summary}`,
+      openItemsText ? `ITENS:\n${openItemsText}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     latestTexts: brief.recentTurns.length ? brief.recentTurns : brief.openThreads,
     personName,
     personNote: conv.rows[0]?.person_note ?? null,

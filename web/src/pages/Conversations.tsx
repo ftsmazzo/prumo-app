@@ -16,6 +16,7 @@ export function Conversations() {
   const [tagsText, setTagsText] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [refichando, setRefichando] = useState(false);
 
   async function reloadList(q?: string) {
     try {
@@ -69,6 +70,20 @@ export function Conversations() {
       setError("Não salvou a ficha da conversa.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reficharEsta() {
+    if (!detail) return;
+    setRefichando(true);
+    try {
+      await client.refichar(String(detail.conversation.id));
+      await open(String(detail.conversation.id));
+      await reloadList(query || undefined);
+    } catch {
+      setError("Falha ao refichar com a IA.");
+    } finally {
+      setRefichando(false);
     }
   }
 
@@ -155,23 +170,46 @@ export function Conversations() {
             </header>
 
             <div className="context-card">
-              <h4>Micro-resumo</h4>
+              <header className="row-actions" style={{ justifyContent: "space-between" }}>
+                <h4 style={{ margin: 0 }}>Micro-resumo</h4>
+                <button
+                  type="button"
+                  className="btn-quiet btn-sm"
+                  disabled={refichando}
+                  onClick={() => void reficharEsta()}
+                >
+                  {refichando ? "Fichando…" : "Refichar com IA"}
+                </button>
+              </header>
               <p>
                 {String(
                   detail.conversation.micro_summary ||
                     detail.brief?.micro_summary ||
-                    "Ainda sem resumo — entra na próxima mensagem.",
+                    "Ainda sem resumo — use Refichar com IA.",
                 )}
               </p>
               {Array.isArray(detail.brief?.openItems) && detail.brief.openItems.length > 0 ? (
                 <ul className="open-items">
-                  {(detail.brief.openItems as Array<{ kind: string; label: string }>).map((it, i) => (
+                  {(
+                    detail.brief.openItems as Array<{
+                      kind: string;
+                      label: string;
+                      ownerAction?: boolean;
+                    }>
+                  ).map((it, i) => (
                     <li key={`${it.kind}-${i}`}>
                       <span className="tag">{it.kind}</span> {it.label}
+                      {it.ownerAction === false ? (
+                        <span className="muted"> · não é ação sua</span>
+                      ) : it.ownerAction ? (
+                        <span className="muted"> · ação sua</span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
-              ) : null}
+              ) : (
+                <p className="muted">Sem pendência operacional clara.</p>
+              )}
             </div>
 
             <div className="context-card meta-form">
@@ -227,10 +265,17 @@ export function Conversations() {
             )}
 
             <div className="context-card">
-              <h4>Fichamento (últimos turnos)</h4>
+              <h4>Fichamento (compreensão)</h4>
               <pre className="brief-box">
                 {detail.brief?.summary ? String(detail.brief.summary) : "(sem fichamento)"}
               </pre>
+              {detail.brief?.summary &&
+              String(detail.brief.summary).includes("[20") ? (
+                <p className="muted">
+                  Este texto ainda parece dump de mensagens — use Refichar no servidor ou aguarde
+                  o worker com OpenRouter.
+                </p>
+              ) : null}
             </div>
 
             <div className="context-card">

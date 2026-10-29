@@ -109,4 +109,12 @@ export const client = {
       "/api/ops/fix-contact-names",
       { method: "POST", body: "{}" },
     ),
+  refichar: (conversationId?: string) =>
+    api<{ count: number; results: Array<{ id: string; micro: string; source: string }> }>(
+      "/api/ops/refichar",
+      {
+        method: "POST",
+        body: JSON.stringify(conversationId ? { conversationId } : { limit: 20 }),
+      },
+    ),
 };

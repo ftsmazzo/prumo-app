@@ -160,6 +160,46 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  /** Re-ficha conversas com LLM (micro-resumo de verdade, não cola de mensagem). */
+  app.post("/api/ops/refichar", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    const body = z
+      .object({
+        conversationId: z.string().uuid().optional(),
+        limit: z.number().int().min(1).max(40).optional(),
+      })
+      .safeParse(req.body ?? {});
+    return withTenant(user.tenantId, async (client) => {
+      const { refreshConversationBrief } = await import("../organize.js");
+      let ids: string[] = [];
+      if (body.success && body.data.conversationId) {
+        ids = [body.data.conversationId];
+      } else {
+        const lim = body.success && body.data.limit ? body.data.limit : 20;
+        const rows = await client.query<{ id: string }>(
+          `select id from conversations where tenant_id = $1
+            order by last_message_at desc limit $2`,
+          [user.tenantId, lim],
+        );
+        ids = rows.rows.map((r) => r.id);
+      }
+      const results: Array<{ id: string; micro: string; source: string }> = [];
+      for (const id of ids) {
+        const brief = await refreshConversationBrief(client, {
+          tenantId: user.tenantId,
+          conversationId: id,
+        });
+        results.push({
+          id,
+          micro: brief.microSummary.slice(0, 160),
+          source: brief.ficharSource,
+        });
+      }
+      return { count: results.length, results };
+    });
+  });
+
   /** Corrige contatos batizados com o nome do dono (fromMe/pushName). */
   app.post("/api/ops/fix-contact-names", async (req, reply) => {
     const user = await requireUser(req, reply);
