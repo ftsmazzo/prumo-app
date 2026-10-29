@@ -160,6 +160,60 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  /** Corrige contatos batizados com o nome do dono (fromMe/pushName). */
+  app.post("/api/ops/fix-contact-names", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    const { isOperatorDisplayName, isOperatorPhone, peerDisplayName } = await import(
+      "../contacts.js"
+    );
+    return withTenant(user.tenantId, async (client) => {
+      const people = await client.query<{ id: string; phone: string; name: string | null }>(
+        `select id, phone, name from people where tenant_id = $1`,
+        [user.tenantId],
+      );
+      let cleared = 0;
+      let markedSelf = 0;
+      for (const p of people.rows) {
+        if (isOperatorPhone(p.phone)) {
+          await client.query(
+            `update people set kind = 'self', updated_at = now() where id = $1`,
+            [p.id],
+          );
+          markedSelf += 1;
+          continue;
+        }
+        if (!isOperatorDisplayName(p.name)) continue;
+        const inbound = await client.query<{ push_name: string | null }>(
+          `select push_name from messages
+            where person_id = $1 and direction = 'in' and push_name is not null and push_name <> ''
+            order by provider_timestamp desc limit 5`,
+          [p.id],
+        );
+        let restored: string | null = null;
+        for (const row of inbound.rows) {
+          restored = peerDisplayName({ direction: "in", pushName: row.push_name });
+          if (restored) break;
+        }
+        await client.query(
+          `update people set name = $2, name_source = case when $2 is null then '' else 'push' end, updated_at = now()
+            where id = $1`,
+          [p.id, restored],
+        );
+        await client.query(
+          `update conversations set
+             title = coalesce($2, peer_phone),
+             peer_push_name = $2,
+             updated_at = now()
+           where person_id = $1 and tenant_id = $3`,
+          [p.id, restored, user.tenantId],
+        );
+        cleared += 1;
+      }
+      return { cleared, markedSelf, total: people.rows.length };
+    });
+  });
+
   /** Descarta propostas ruins e reprocessa conversas com o motor novo. */
   app.post("/api/ops/reset-pending", async (req, reply) => {
     const user = await requireUser(req, reply);

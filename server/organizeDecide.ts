@@ -78,7 +78,7 @@ export async function organizeAndDecide(
   const decideInput = {
     timezone,
     now: new Date(),
-    briefSummary: brief.summary,
+    briefSummary: [brief.microSummary, brief.summary].filter(Boolean).join("\n---\n"),
     latestTexts: brief.recentTurns.length ? brief.recentTurns : brief.openThreads,
     personName,
     personNote: conv.rows[0]?.person_note ?? null,

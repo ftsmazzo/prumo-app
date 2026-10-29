@@ -1,21 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser, withTenant } from "../auth.js";
-
-function cleanTags(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  const out: string[] = [];
-  for (const t of raw) {
-    const s = String(t)
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/\p{M}/gu, "")
-      .replace(/[^a-z0-9_-]+/g, "")
-      .slice(0, 32);
-    if (s && !out.includes(s) && out.length < 12) out.push(s);
-  }
-  return out;
-}
+import { cleanTags, isOperatorDisplayName, isOperatorPhone } from "../contacts.js";
 
 export async function registerPeopleRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/people", async (req, reply) => {
@@ -24,7 +10,7 @@ export async function registerPeopleRoutes(app: FastifyInstance): Promise<void> 
     return withTenant(user.tenantId, async (client) => {
       const rows = await client.query(
         `select p.id, p.phone, p.name, p.kind, p.tags, p.note, p.relation,
-                p.created_at, p.updated_at,
+                p.name_source, p.created_at, p.updated_at,
                 (select count(*)::int from conversations c
                   where c.person_id = p.id and c.tenant_id = p.tenant_id) as conversation_count,
                 (select count(*)::int from commitments c
@@ -34,12 +20,22 @@ export async function registerPeopleRoutes(app: FastifyInstance): Promise<void> 
                   where t.person_id = p.id and t.tenant_id = p.tenant_id
                     and t.status in ('todo','doing')) as open_tasks
            from people p
-          where p.tenant_id = $1 and p.kind <> 'self'
+          where p.tenant_id = $1
+            and p.kind not in ('self')
+            and length(regexp_replace(p.phone, '\\D', '', 'g')) between 10 and 13
           order by lower(coalesce(nullif(p.name,''), p.phone))
           limit 500`,
         [user.tenantId],
       );
-      return { items: rows.rows };
+      // Esconde operador e nomes contaminados com o dono (até limpeza).
+      const items = rows.rows.filter((p) => {
+        if (isOperatorPhone(String(p.phone))) return false;
+        if (isOperatorDisplayName(String(p.name || "")) && String(p.name_source) !== "manual") {
+          return false;
+        }
+        return true;
+      });
+      return { items };
     });
   });
 
@@ -62,13 +58,14 @@ export async function registerPeopleRoutes(app: FastifyInstance): Promise<void> 
       const updated = await client.query(
         `update people set
            name = coalesce($3, name),
+           name_source = case when $3 is not null then 'manual' else name_source end,
            note = coalesce($4, note),
            relation = coalesce($5, relation),
            tags = coalesce($6::text[], tags),
            kind = coalesce($7, kind),
            updated_at = now()
          where id = $1 and tenant_id = $2
-         returning id, phone, name, kind, tags, note, relation`,
+         returning id, phone, name, kind, tags, note, relation, name_source`,
         [
           req.params.id,
           user.tenantId,

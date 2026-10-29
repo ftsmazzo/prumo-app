@@ -10,6 +10,7 @@ export function People() {
   const [name, setName] = useState("");
   const [tags, setTags] = useState("");
   const [saving, setSaving] = useState(false);
+  const [fixing, setFixing] = useState(false);
 
   async function reload() {
     try {
@@ -55,6 +56,20 @@ export function People() {
     }
   }
 
+  async function fixNames() {
+    setFixing(true);
+    try {
+      const r = await client.fixContactNames();
+      setError(null);
+      await reload();
+      alert(`Corrigidos ${r.cleared} nomes; ${r.markedSelf} marcados como você.`);
+    } catch {
+      setError("Falha ao corrigir nomes.");
+    } finally {
+      setFixing(false);
+    }
+  }
+
   if (error && !items) return <p className="form-error">{error}</p>;
   if (!items) return <p className="boot">Carregando contatos…</p>;
 
@@ -63,8 +78,13 @@ export function People() {
       {error ? <p className="form-error">{error}</p> : null}
       <section className="ms-dash-panel">
         <header>
-          <h3>Contatos</h3>
-          <p className="muted">{items.length} pessoas da escuta</p>
+          <div>
+            <h3>Contatos</h3>
+            <p className="muted">{items.length} pessoas — nome, nota, tags e relação</p>
+          </div>
+          <button type="button" className="btn-quiet btn-sm" disabled={fixing} onClick={() => void fixNames()}>
+            {fixing ? "Corrigindo…" : "Corrigir nomes do dono"}
+          </button>
         </header>
         {items.length === 0 ? (
           <p className="muted panel-empty">Ainda sem contatos — entram quando o WhatsApp fala.</p>
@@ -93,7 +113,7 @@ export function People() {
                   ) : null}
                 </div>
                 <button type="button" className="btn-quiet btn-sm" onClick={() => open(p)}>
-                  Editar
+                  Ficha
                 </button>
               </li>
             ))}

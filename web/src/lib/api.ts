@@ -22,6 +22,7 @@ export type Person = {
   tags: string[];
   note: string;
   relation: string;
+  name_source?: string;
   conversation_count?: number;
   open_commitments?: number;
   open_tasks?: number;
@@ -30,11 +31,19 @@ export type Person = {
 export type ConversationListItem = Record<string, unknown> & {
   id: string;
   briefPreview?: string;
+  micro_summary?: string;
+  tags?: string[];
 };
 
 export type ConversationDetail = {
-  conversation: Record<string, unknown>;
-  brief: { summary?: string; open_threads?: string[]; version?: number } | null;
+  conversation: Record<string, unknown> & { tags?: string[]; micro_summary?: string };
+  brief: {
+    summary?: string;
+    micro_summary?: string;
+    open_threads?: string[];
+    openItems?: Array<{ kind: string; label: string }>;
+    version?: number;
+  } | null;
   messages: Array<Record<string, unknown>>;
   commitments: Array<Record<string, unknown>>;
   tasks: Array<Record<string, unknown>>;
@@ -74,10 +83,20 @@ export const client = {
   people: () => api<{ items: Person[] }>("/api/people"),
   patchPerson: (id: string, body: Record<string, unknown>) =>
     api(`/api/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  conversations: () => api<{ items: ConversationListItem[] }>("/api/conversations"),
+  conversations: (q?: string, tag?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (tag) params.set("tag", tag);
+    const qs = params.toString();
+    return api<{ items: ConversationListItem[] }>(`/api/conversations${qs ? `?${qs}` : ""}`);
+  },
   conversation: (id: string) => api<ConversationDetail>(`/api/conversations/${id}`),
   patchConversation: (id: string, body: Record<string, unknown>) =>
     api(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  searchMessages: (q: string) =>
+    api<{ items: Array<Record<string, unknown>> }>(
+      `/api/conversations/search?q=${encodeURIComponent(q)}`,
+    ),
   resetPending: () =>
     api<{
       cancelledCommitments: number;
@@ -85,4 +104,9 @@ export const client = {
       conversations: number;
       enqueued: number;
     }>("/api/ops/reset-pending", { method: "POST", body: "{}" }),
+  fixContactNames: () =>
+    api<{ cleared: number; markedSelf: number; total: number }>(
+      "/api/ops/fix-contact-names",
+      { method: "POST", body: "{}" },
+    ),
 };

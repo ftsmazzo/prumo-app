@@ -7,156 +7,255 @@ import {
 
 export function Conversations() {
   const [items, setItems] = useState<ConversationListItem[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [query, setQuery] = useState("");
   const [rename, setRename] = useState("");
+  const [tagsText, setTagsText] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  async function reload() {
+  async function reloadList(q?: string) {
     try {
-      const res = await client.conversations();
+      const res = await client.conversations(q);
       setItems(res.items);
       setError(null);
+      return res.items;
     } catch {
       setError("Falha ao carregar conversas.");
+      return null;
     }
   }
 
   useEffect(() => {
-    void reload();
+    void reloadList();
   }, []);
 
   async function open(id: string) {
+    setSelectedId(id);
+    setLoadingDetail(true);
+    setError(null);
     try {
       const d = await client.conversation(id);
       setDetail(d);
       setRename(String(d.conversation.person_name || d.conversation.title || ""));
-      setError(null);
-    } catch {
-      setError("Não abriu a conversa.");
+      setTagsText(((d.conversation.tags as string[]) || []).join(", "));
+      setNote(String(d.conversation.person_note || ""));
+    } catch (e) {
+      setDetail(null);
+      setError(e instanceof Error ? e.message : "Não abriu a conversa.");
+    } finally {
+      setLoadingDetail(false);
     }
   }
 
-  async function saveName() {
-    if (!detail || !rename.trim()) return;
-    await client.patchConversation(String(detail.conversation.id), {
-      personName: rename.trim(),
-    });
-    await open(String(detail.conversation.id));
-    await reload();
+  async function saveMeta() {
+    if (!detail) return;
+    setSaving(true);
+    try {
+      await client.patchConversation(String(detail.conversation.id), {
+        personName: rename.trim() || undefined,
+        tags: tagsText
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        note: note,
+      });
+      await open(String(detail.conversation.id));
+      await reloadList(query || undefined);
+    } catch {
+      setError("Não salvou a ficha da conversa.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  if (error && !items) return <p className="form-error">{error}</p>;
   if (!items) return <p className="boot">Carregando conversas…</p>;
 
   return (
-    <div className="ms-page conv-layout">
-      {error ? <p className="form-error">{error}</p> : null}
-
-      <section className="ms-dash-panel">
-        <header>
-          <h3>Conversas</h3>
-          <p className="muted">Fio + fichamento — origem do que aparece em Hoje</p>
-        </header>
+    <div className="inbox-split">
+      <aside className="inbox-list">
+        <div className="inbox-list-head">
+          <input
+            className="inbox-search"
+            placeholder="Buscar nome, tag ou texto…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void reloadList(query || undefined);
+            }}
+          />
+          <button type="button" className="btn-quiet btn-sm" onClick={() => void reloadList(query || undefined)}>
+            Buscar
+          </button>
+        </div>
         {items.length === 0 ? (
-          <p className="muted panel-empty">Nenhuma conversa ainda.</p>
+          <p className="muted panel-empty">Nenhuma conversa.</p>
         ) : (
-          <ul className="ms-dash-list">
-            {items.map((c) => (
-              <li key={String(c.id)}>
-                <div>
-                  <strong>{String(c.person_name || c.title || c.peer_phone)}</strong>
-                  <span>
-                    {new Date(String(c.last_message_at)).toLocaleString("pt-BR", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                    {" · "}
-                    {Number(c.message_count) || 0} msgs
-                  </span>
-                  {c.briefPreview ? <span className="muted">{String(c.briefPreview)}</span> : null}
-                </div>
-                <button type="button" className="btn-quiet btn-sm" onClick={() => void open(String(c.id))}>
-                  Abrir
-                </button>
-              </li>
-            ))}
+          <ul className="inbox-rows">
+            {items.map((c) => {
+              const id = String(c.id);
+              const active = id === selectedId;
+              const tags = (c.tags as string[]) || [];
+              return (
+                <li key={id}>
+                  <button
+                    type="button"
+                    className={active ? "inbox-row active" : "inbox-row"}
+                    onClick={() => void open(id)}
+                  >
+                    <strong>{String(c.person_name || c.title || c.peer_phone)}</strong>
+                    <span className="muted">
+                      {new Date(String(c.last_message_at)).toLocaleString("pt-BR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      {" · "}
+                      {Number(c.message_count) || 0} msgs
+                    </span>
+                    {c.briefPreview || c.micro_summary ? (
+                      <span className="row-preview">{String(c.micro_summary || c.briefPreview)}</span>
+                    ) : null}
+                    {tags.length > 0 ? (
+                      <span className="tag-row">
+                        {tags.map((t) => (
+                          <span key={t} className="tag">
+                            {t}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
-      </section>
+      </aside>
 
-      {detail ? (
-        <section className="ms-dash-panel">
-          <header>
-            <h3>{String(detail.conversation.person_name || detail.conversation.title)}</h3>
-            <p className="muted">{String(detail.conversation.peer_phone)}</p>
-          </header>
+      <section className="inbox-detail">
+        {error ? <p className="form-error">{error}</p> : null}
+        {!selectedId ? (
+          <p className="muted panel-empty">Selecione uma conversa à esquerda.</p>
+        ) : loadingDetail ? (
+          <p className="boot">Abrindo fio…</p>
+        ) : !detail ? (
+          <p className="muted panel-empty">Sem detalhe.</p>
+        ) : (
+          <>
+            <header className="inbox-detail-head">
+              <div>
+                <h3>{String(detail.conversation.person_name || detail.conversation.title)}</h3>
+                <p className="muted">{String(detail.conversation.peer_phone)}</p>
+              </div>
+            </header>
 
-          <label className="field">
-            <span>Nome do contato</span>
-            <div className="row-actions">
-              <input value={rename} onChange={(e) => setRename(e.target.value)} />
-              <button type="button" className="btn-quiet btn-sm" onClick={() => void saveName()}>
-                Salvar
+            <div className="context-card">
+              <h4>Micro-resumo</h4>
+              <p>
+                {String(
+                  detail.conversation.micro_summary ||
+                    detail.brief?.micro_summary ||
+                    "Ainda sem resumo — entra na próxima mensagem.",
+                )}
+              </p>
+              {Array.isArray(detail.brief?.openItems) && detail.brief.openItems.length > 0 ? (
+                <ul className="open-items">
+                  {(detail.brief.openItems as Array<{ kind: string; label: string }>).map((it, i) => (
+                    <li key={`${it.kind}-${i}`}>
+                      <span className="tag">{it.kind}</span> {it.label}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+
+            <div className="context-card meta-form">
+              <label className="field">
+                <span>Nome</span>
+                <input value={rename} onChange={(e) => setRename(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Tags da conversa (vírgula)</span>
+                <input
+                  value={tagsText}
+                  onChange={(e) => setTagsText(e.target.value)}
+                  placeholder="agenda, comercial, urgente…"
+                />
+              </label>
+              <label className="field">
+                <span>Nota do contato</span>
+                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+              </label>
+              <button type="button" className="btn-primary" disabled={saving} onClick={() => void saveMeta()}>
+                {saving ? "Salvando…" : "Salvar contexto"}
               </button>
             </div>
-          </label>
 
-          {detail.conversation.person_note ? (
-            <p className="muted">Nota: {String(detail.conversation.person_note)}</p>
-          ) : null}
+            {(detail.commitments.length > 0 || detail.tasks.length > 0) && (
+              <div className="context-card">
+                <h4>Itens ligados</h4>
+                <ul className="ms-dash-list">
+                  {detail.commitments.map((c) => (
+                    <li key={String(c.id)}>
+                      <div>
+                        <strong>{String(c.title)}</strong>
+                        <span>
+                          compromisso
+                          {c.needs_confirm ? " · confirmar" : ""}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                  {detail.tasks.map((t) => (
+                    <li key={String(t.id)}>
+                      <div>
+                        <strong>{String(t.title)}</strong>
+                        <span>
+                          tarefa
+                          {t.needs_confirm ? " · confirmar" : ""}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
-          <h4>Fichamento</h4>
-          <pre className="brief-box">
-            {detail.brief?.summary ? String(detail.brief.summary) : "(sem fichamento ainda)"}
-          </pre>
+            <div className="context-card">
+              <h4>Fichamento (últimos turnos)</h4>
+              <pre className="brief-box">
+                {detail.brief?.summary ? String(detail.brief.summary) : "(sem fichamento)"}
+              </pre>
+            </div>
 
-          {(detail.commitments.length > 0 || detail.tasks.length > 0) && (
-            <>
-              <h4>Itens desta conversa</h4>
-              <ul className="ms-dash-list">
-                {detail.commitments.map((c) => (
-                  <li key={String(c.id)}>
-                    <div>
-                      <strong>{String(c.title)}</strong>
-                      <span>
-                        compromisso
-                        {c.needs_confirm ? " · confirmar" : ""}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-                {detail.tasks.map((t) => (
-                  <li key={String(t.id)}>
-                    <div>
-                      <strong>{String(t.title)}</strong>
-                      <span>
-                        tarefa
-                        {t.needs_confirm ? " · confirmar" : ""}
-                      </span>
-                    </div>
+            <div className="context-card">
+              <h4>Histórico ({detail.messages.length})</h4>
+              <ul className="thread-list dense">
+                {detail.messages.map((m) => (
+                  <li key={String(m.id)} className={String(m.direction) === "out" ? "mine" : "theirs"}>
+                    <span className="who">
+                      {String(m.direction) === "out" ? "eu" : String(m.push_name || "contato")}
+                      {" · "}
+                      {new Date(String(m.provider_timestamp)).toLocaleString("pt-BR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span className="body">{String(m.text || `(${m.message_type})`)}</span>
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-
-          <h4>Mensagens</h4>
-          <ul className="thread-list">
-            {detail.messages.map((m) => (
-              <li key={String(m.id)} className={String(m.direction) === "out" ? "mine" : "theirs"}>
-                <span className="who">{String(m.direction) === "out" ? "eu" : String(m.push_name || "contato")}</span>
-                <span className="body">{String(m.text || `(${m.message_type})`)}</span>
-              </li>
-            ))}
-          </ul>
-
-          <button type="button" className="btn-quiet" onClick={() => setDetail(null)}>
-            Fechar
-          </button>
-        </section>
-      ) : null}
+            </div>
+          </>
+        )}
+      </section>
     </div>
   );
 }

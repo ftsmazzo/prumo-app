@@ -42,6 +42,7 @@ export async function storeMessages(
         messageId: inserted,
         peerPhone: message.contactPhone,
         pushName: message.pushName,
+        direction: message.direction,
         providerTimestamp: message.providerTimestamp,
       });
       const runAt = new Date(Date.now() + ORGANIZE_DEBOUNCE_MS);

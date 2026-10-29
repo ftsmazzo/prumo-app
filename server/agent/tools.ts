@@ -3,6 +3,39 @@ import { ensureSecretaryTitle } from "../polish.js";
 
 export type ToolResult = { ok: true; text: string; evidence: string } | { ok: false; text: string };
 
+/** Busca no histórico bruto (SQL) — referência tipo RAG sem embedding no MVP. */
+export async function toolSearchHistory(
+  client: pg.PoolClient,
+  tenantId: string,
+  queryText: string,
+): Promise<ToolResult> {
+  const q = queryText.trim().slice(0, 80);
+  if (q.length < 2) return { ok: false, text: "Digite o que quer procurar no histórico." };
+  const rows = await client.query<{
+    text: string;
+    person_name: string | null;
+    micro_summary: string;
+    at: Date;
+  }>(
+    `select m.text, p.name as person_name, c.micro_summary, m.provider_timestamp as at
+       from messages m
+       join conversations c on c.id = m.conversation_id
+       left join people p on p.id = c.person_id
+      where m.tenant_id = $1 and m.text ilike '%'||$2||'%'
+      order by m.provider_timestamp desc
+      limit 8`,
+    [tenantId, q],
+  );
+  if (!rows.rows.length) return { ok: false, text: `Nada no histórico para "${q}".` };
+  const lines = rows.rows.map((r) => {
+    const when = new Date(r.at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const who = r.person_name || "contato";
+    return `- ${when} · ${who}: ${String(r.text).slice(0, 160)}`;
+  });
+  const text = `Histórico (“${q}”):\n${lines.join("\n")}`;
+  return { ok: true, text, evidence: text };
+}
+
 /** Tools SQL do agente — números vêm do banco, não da LLM. */
 export async function toolToday(
   client: pg.PoolClient,

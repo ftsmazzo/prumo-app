@@ -60,7 +60,8 @@ export async function decideWithLlm(
       name: input.personName,
       note: input.personNote,
     },
-    brief: input.briefSummary.slice(0, 4000),
+    // micro-resumo + fichamento; o fio bruto completo fica no SQL (busca sob demanda).
+    brief: input.briefSummary.slice(0, 4500),
     turns: input.latestTexts.slice(-12),
     openCommitments: input.openCommitments,
     openTasks: input.openTasks,

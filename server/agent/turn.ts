@@ -9,6 +9,7 @@ import {
   toolCreateCommitment,
   toolCreateTask,
   toolRescheduleTomorrow,
+  toolSearchHistory,
   toolToday,
   type ToolResult,
 } from "./tools.js";
@@ -44,12 +45,13 @@ type ResolvedTurn = { text: string; evidence: string };
 
 const SYSTEM = `Você é o Prumo, secretário pessoal no WhatsApp. Responda em português curto e natural (não robótico).
 Escolha UMA ferramenta SQL ou só responda.
-JSON: {"tool":"today"|"confirm"|"reschedule"|"complete"|"create_commitment"|"create_task"|null,"title":"...","startsAt":"ISO se create_commitment","dueOn":"YYYY-MM-DD se create_task","hint":"trecho para achar item","reply":"texto se tool=null"}
+JSON: {"tool":"today"|"confirm"|"reschedule"|"complete"|"create_commitment"|"create_task"|"search"|null,"title":"...","startsAt":"ISO se create_commitment","dueOn":"YYYY-MM-DD se create_task","hint":"trecho para achar item ou busca","reply":"texto se tool=null"}
 Regras:
 - Perguntas sobre agenda/tarefas do dia → today
 - Confirmar o que está pendente → confirm
 - Remarcar → reschedule (+ hint)
 - Concluir tarefa → complete (+ hint)
+- Lembrar o que combinou / buscar no histórico → search (+ hint)
 - Criar compromisso com horário → create_commitment (title curto tipo secretária + startsAt ISO America/Sao_Paulo)
 - Criar tarefa/ação → create_task (title curto; dueOn só YYYY-MM-DD se souber)
 - Sem ação clara → tool null e reply útil
@@ -139,9 +141,19 @@ async function resolveTurn(
       ),
     );
   }
+  if (/^(busca|procur|lembra|o que combinei|hist[oó]rico)\b/.test(lower)) {
+    return fromTool(
+      await toolSearchHistory(
+        client,
+        tenantId,
+        text.replace(/^(busca|procur[ae]?|lembra|o que combinei|no hist[oó]rico)\s*/i, "").trim() ||
+          text,
+      ),
+    );
+  }
   if (/^ajuda$|^help$/.test(lower)) {
     return {
-      text: "Pode falar natural: o que tenho hoje, confirma, remarca X, conclui Y, anota reunião amanhã 15h, cria tarefa…",
+      text: "Pode falar natural: o que tenho hoje, confirma, remarca X, conclui Y, busca contrato com Daniel, anota reunião amanhã 15h…",
       evidence: "",
     };
   }
@@ -192,6 +204,9 @@ async function resolveTurn(
           dueOn: data.dueOn ?? null,
         }),
       );
+    }
+    if (tool === "search") {
+      return fromTool(await toolSearchHistory(client, tenantId, data.hint || text));
     }
     const reply = (data.reply || "").trim();
     if (reply) return { text: reply, evidence: "" };
