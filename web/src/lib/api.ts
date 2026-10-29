@@ -109,6 +109,11 @@ export const client = {
       "/api/ops/purge-agent-peers",
       { method: "POST", body: "{}" },
     ),
+  fixOrgs: () =>
+    api<{ merged: number; renamed: number; peopleFixed: number; groups: number }>(
+      "/api/ops/fix-orgs",
+      { method: "POST", body: "{}" },
+    ),
   conversations: (q?: string, tag?: string) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);

@@ -1077,21 +1077,46 @@ input {
   gap: 1rem;
 }
 
-.btn-quiet {
+.btn-quiet,
+.btn-primary {
   width: auto;
-  height: 2.2rem;
+  min-height: 2.35rem;
   margin: 0;
-  padding: 0 0.85rem;
+  padding: 0 1rem;
+  border-radius: 0.65rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.btn-quiet {
   background: var(--snow);
   color: var(--graphite);
   border: 1px solid var(--rule);
-  border-radius: 0.65rem;
-  font-weight: 600;
-  cursor: pointer;
 }
-
 .btn-quiet:hover:not(:disabled) {
   background: var(--panel);
+}
+.btn-primary {
+  background: var(--graphite);
+  color: #fff;
+  border: 1px solid var(--graphite);
+}
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--graphite) 88%, white);
+}
+.btn-primary:disabled,
+.btn-quiet:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-sm {
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  font-size: 0.82rem;
 }
 
 
@@ -1494,10 +1519,34 @@ html[data-theme="dark"] .crm-card {
   font-weight: 650;
 }
 
+.contacts-page {
+  padding-bottom: 1.5rem;
+}
+.panel-body {
+  padding: 1rem 1.15rem 1.25rem;
+  min-width: 0;
+}
+.panel-body.tight {
+  padding: 0.45rem 0.55rem 0.75rem;
+}
+.panel-empty {
+  margin: 0.5rem 0 0;
+}
+.ms-dash-list.flush {
+  padding: 0;
+}
+.ms-dash-panel > header .muted,
+.ms-dash-panel > header p {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ash);
+  font-weight: 400;
+}
+
 .drawer-root {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 50;
   display: flex;
   justify-content: flex-end;
 }
@@ -1505,23 +1554,24 @@ html[data-theme="dark"] .crm-card {
   position: absolute;
   inset: 0;
   border: 0;
-  background: rgba(18, 23, 30, 0.35);
+  background: rgba(18, 23, 30, 0.4);
   cursor: pointer;
 }
 .drawer-panel {
   position: relative;
-  width: min(26rem, 100vw);
-  height: 100%;
+  width: min(28rem, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
   background: #fff;
-  box-shadow: -8px 0 32px rgba(18, 23, 30, 0.12);
+  box-shadow: -12px 0 40px rgba(18, 23, 30, 0.16);
   display: flex;
   flex-direction: column;
   animation: drawer-in 180ms ease both;
 }
 @keyframes drawer-in {
   from {
-    transform: translateX(12px);
-    opacity: 0.6;
+    transform: translateX(16px);
+    opacity: 0.55;
   }
   to {
     transform: translateX(0);
@@ -1529,35 +1579,65 @@ html[data-theme="dark"] .crm-card {
   }
 }
 .drawer-head {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.75rem;
-  padding: 1rem 1.15rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
 }
 .drawer-head h3 {
   margin: 0;
+  font-size: 1.05rem;
 }
 .drawer-head p {
-  margin: 0.2rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--ash);
-  font-size: 0.88rem;
+  font-size: 0.9rem;
 }
 .drawer-body {
-  flex: 1;
+  flex: 1 1 auto;
   overflow: auto;
-  padding: 0.5rem 1.15rem 1rem;
+  padding: 0.85rem 1.25rem 1.25rem;
+  min-height: 0;
 }
 .drawer-foot {
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.85rem 1.15rem;
-  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  gap: 0.55rem;
+  padding: 0.95rem 1.25rem calc(0.95rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--rule);
+  background: #fff;
 }
 .org-create {
-  padding: 0 0 0.5rem;
+  display: grid;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.drawer-body .field input,
+.drawer-body .field textarea,
+.drawer-body .field select,
+.panel-body .field input,
+.panel-body .field textarea,
+.panel-body .field select {
+  border: 1px solid var(--rule);
+  border-radius: 0.65rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--panel);
+}
+.drawer-body .field input:focus,
+.drawer-body .field textarea:focus,
+.drawer-body .field select:focus,
+.panel-body .field input:focus,
+.panel-body .field textarea:focus,
+.panel-body .field select:focus {
+  outline: 2px solid color-mix(in srgb, var(--plumb) 35%, transparent);
+  outline-offset: 1px;
+  background: #fff;
 }
 .row-actions {
   display: flex;

@@ -455,6 +455,116 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Junta empresas duplicadas (ex.: Ecommtábil + Ecommt�bil) e corrige acentos
+   * quebrados em people/organizations.
+   */
+  app.post("/api/ops/fix-orgs", async (req, reply) => {
+    const user = await requireUser(req, reply);
+    if (!user) return;
+    const { foldKey, repairMojibake, preferCanonicalOrgName } = await import("../textFix.js");
+    return withTenant(user.tenantId, async (client) => {
+      const orgs = await client.query<{
+        id: string;
+        name: string;
+        note: string;
+        people_count: number;
+      }>(
+        `select o.id, o.name, o.note,
+                (select count(*)::int from people p where p.organization_id = o.id) as people_count
+           from organizations o where o.tenant_id = $1`,
+        [user.tenantId],
+      );
+
+      const groups = new Map<string, typeof orgs.rows>();
+      for (const o of orgs.rows) {
+        const key = foldKey(repairMojibake(o.name)) || o.id;
+        const list = groups.get(key) ?? [];
+        list.push(o);
+        groups.set(key, list);
+      }
+
+      let merged = 0;
+      let renamed = 0;
+      for (const [, list] of groups) {
+        const canonical = preferCanonicalOrgName(list.map((o) => o.name));
+        list.sort((a, b) => b.people_count - a.people_count || a.name.localeCompare(b.name));
+        const keep = list[0]!;
+        if (keep.name !== canonical || keep.note !== repairMojibake(keep.note)) {
+          await client.query(
+            `update organizations set name = $3, note = $4, updated_at = now()
+              where id = $1 and tenant_id = $2`,
+            [keep.id, user.tenantId, canonical, repairMojibake(keep.note)],
+          );
+          renamed += 1;
+        }
+        for (const drop of list.slice(1)) {
+          await client.query(
+            `update people set organization_id = $3, updated_at = now()
+              where organization_id = $1 and tenant_id = $2`,
+            [drop.id, user.tenantId, keep.id],
+          );
+          await client.query(`delete from organizations where id = $1 and tenant_id = $2`, [
+            drop.id,
+            user.tenantId,
+          ]);
+          merged += 1;
+        }
+      }
+
+      const people = await client.query<{
+        id: string;
+        note: string;
+        relation: string;
+        role_title: string;
+      }>(
+        `select id, note, relation, role_title from people where tenant_id = $1`,
+        [user.tenantId],
+      );
+      let peopleFixed = 0;
+      for (const p of people.rows) {
+        const note = repairMojibake(p.note);
+        const relation = repairMojibake(p.relation);
+        const role = repairMojibake(p.role_title);
+        if (note === p.note && relation === p.relation && role === p.role_title) continue;
+        await client.query(
+          `update people set note = $3, relation = $4, role_title = $5, updated_at = now()
+            where id = $1 and tenant_id = $2`,
+          [p.id, user.tenantId, note, relation, role],
+        );
+        peopleFixed += 1;
+      }
+
+      // Reaplica textos limpos do piloto Junior / Eliezer.
+      await client.query(
+        `update people set
+           role_title = case
+             when lower(coalesce(name,'')) like '%junior%' then 'funcionário'
+             when lower(coalesce(name,'')) like '%eliezer%' then 'dono'
+             else role_title end,
+           relation = case
+             when lower(coalesce(name,'')) like '%junior%' then 'funcionário Ecommtábil'
+             when lower(coalesce(name,'')) like '%eliezer%' then 'dono Ecommtábil'
+             else relation end,
+           note = case
+             when lower(coalesce(name,'')) like '%junior%'
+               then 'Funcionário Ecommtábil · projeto ecommFlow.'
+             when lower(coalesce(name,'')) like '%eliezer%'
+               then 'Dono da Ecommtábil — pitch do Prumo.'
+             else note end,
+           updated_at = now()
+         where tenant_id = $1
+           and (
+             lower(coalesce(name,'')) like '%junior%'
+             or lower(coalesce(name,'')) like '%eliezer%'
+           )`,
+        [user.tenantId],
+      );
+
+      return { merged, renamed, peopleFixed, groups: groups.size };
+    });
+  });
+
+  /**
    * Marca Secretaria/agente e remove conversas do motor (lista + fichamento).
    * Mensagens brutas permanecem; people.kind=agent some de Contatos/Conversas.
    */

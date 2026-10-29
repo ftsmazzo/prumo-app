@@ -35,21 +35,34 @@ export async function registerOrganizationRoutes(app: FastifyInstance): Promise<
     if (!body.success) return reply.code(400).send({ error: "invalid_body" });
 
     return withTenant(user.tenantId, async (client) => {
+      const { foldKey, repairMojibake } = await import("../textFix.js");
+      const name = repairMojibake(body.data.name.trim());
+      const note = repairMojibake(body.data.note ?? "");
       const tags = cleanTags(body.data.tags ?? []);
+      const key = foldKey(name);
+
+      const all = await client.query<{ id: string; name: string; note: string; tags: string[] }>(
+        `select id, name, note, tags from organizations where tenant_id = $1`,
+        [user.tenantId],
+      );
+      const hit = all.rows.find((o) => foldKey(repairMojibake(o.name)) === key);
+      if (hit) {
+        return {
+          id: hit.id,
+          name: hit.name,
+          note: hit.note,
+          tags: hit.tags,
+          existing: true,
+        };
+      }
+
       const inserted = await client.query(
         `insert into organizations (tenant_id, name, note, tags)
          values ($1, $2, $3, $4::text[])
-         on conflict do nothing
          returning id, name, note, tags, created_at`,
-        [user.tenantId, body.data.name.trim(), body.data.note ?? "", tags],
+        [user.tenantId, name, note, tags],
       );
-      if (inserted.rows[0]) return reply.code(201).send(inserted.rows[0]);
-      const existing = await client.query(
-        `select id, name, note, tags, created_at from organizations
-          where tenant_id = $1 and lower(name) = lower($2)`,
-        [user.tenantId, body.data.name.trim()],
-      );
-      return existing.rows[0] ?? reply.code(409).send({ error: "conflict" });
+      return reply.code(201).send(inserted.rows[0]);
     });
   });
 

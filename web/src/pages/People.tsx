@@ -44,7 +44,7 @@ export function People() {
       setOrgsError(null);
     } catch {
       setOrgs([]);
-      setOrgsError("Empresas indisponíveis (API ainda não no ar ou migration pendente).");
+      setOrgsError("Empresas indisponíveis no momento.");
     }
   }
 
@@ -130,14 +130,16 @@ export function People() {
     }
   }
 
-  async function fixNames() {
+  async function fixData() {
     setFixing(true);
     try {
-      const r = await client.fixContactNames();
-      await reloadPeople();
-      alert(`Corrigidos ${r.cleared} nomes; ${r.markedSelf} marcados como você.`);
+      const r = await client.fixOrgs();
+      await Promise.all([reloadPeople(), reloadOrgs()]);
+      alert(
+        `Limpeza: ${r.merged} empresa(s) mesclada(s), ${r.renamed} renomeada(s), ${r.peopleFixed} ficha(s) com acento corrigido.`,
+      );
     } catch {
-      setError("Falha ao corrigir nomes.");
+      setError("Falha ao limpar empresas/acentos.");
     } finally {
       setFixing(false);
     }
@@ -149,7 +151,7 @@ export function People() {
       const r = await client.purgeAgentPeers();
       await reloadPeople();
       alert(
-        `Secretaria/agente: ${r.markedAgent} marcados; ${r.clearedBriefs} fichamentos limpos; ${r.cancelledJobs} jobs cancelados.`,
+        `Secretaria: ${r.markedAgent} marcados; ${r.clearedBriefs} fichamentos limpos.`,
       );
     } catch {
       setError("Falha ao limpar conversas do agente.");
@@ -190,86 +192,100 @@ export function People() {
           <header>
             <div>
               <h3>Empresas</h3>
-              <p className="muted">Cadastre e vincule depois na ficha do contato</p>
+              <p className="muted">Cadastre e vincule na ficha do contato</p>
             </div>
+            <button
+              type="button"
+              className="btn-quiet btn-sm"
+              disabled={fixing}
+              onClick={() => void fixData()}
+            >
+              {fixing ? "Limpando…" : "Limpar duplicatas"}
+            </button>
           </header>
-          {orgsError ? <p className="form-error">{orgsError}</p> : null}
-          <div className="org-create">
-            <label className="field">
-              <span>{editingOrg ? "Editar nome" : "Nova empresa"}</span>
-              <input
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                placeholder="Ecommtábil"
-              />
-            </label>
-            <label className="field">
-              <span>Nota</span>
-              <input
-                value={orgNote}
-                onChange={(e) => setOrgNote(e.target.value)}
-                placeholder="Cliente piloto…"
-              />
-            </label>
-            <div className="row-actions">
-              {editingOrg ? (
-                <>
-                  <button type="button" className="btn-quiet" onClick={() => {
-                    setEditingOrg(null);
-                    setOrgName("");
-                    setOrgNote("");
-                  }}>
-                    Cancelar
-                  </button>
+          <div className="panel-body">
+            {orgsError ? <p className="form-error">{orgsError}</p> : null}
+            <div className="org-create">
+              <label className="field">
+                <span>{editingOrg ? "Editar nome" : "Nova empresa"}</span>
+                <input
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  placeholder="Ecommtábil"
+                />
+              </label>
+              <label className="field">
+                <span>Nota</span>
+                <input
+                  value={orgNote}
+                  onChange={(e) => setOrgNote(e.target.value)}
+                  placeholder="Cliente piloto…"
+                />
+              </label>
+              <div className="row-actions">
+                {editingOrg ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-quiet"
+                      onClick={() => {
+                        setEditingOrg(null);
+                        setOrgName("");
+                        setOrgNote("");
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={savingOrg || !orgName.trim()}
+                      onClick={() => void saveOrgEdit()}
+                    >
+                      {savingOrg ? "Salvando…" : "Salvar empresa"}
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
                     className="btn-primary"
                     disabled={savingOrg || !orgName.trim()}
-                    onClick={() => void saveOrgEdit()}
+                    onClick={() => void createOrg()}
                   >
-                    {savingOrg ? "Salvando…" : "Salvar empresa"}
+                    {savingOrg ? "Criando…" : "Criar empresa"}
                   </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={savingOrg || !orgName.trim()}
-                  onClick={() => void createOrg()}
-                >
-                  {savingOrg ? "Criando…" : "Criar empresa"}
-                </button>
-              )}
+                )}
+              </div>
             </div>
+            {orgs.length === 0 ? (
+              <p className="muted panel-empty">Nenhuma empresa ainda.</p>
+            ) : (
+              <ul className="ms-dash-list flush">
+                {orgs.map((o) => (
+                  <li key={o.id}>
+                    <div>
+                      <strong>{o.name}</strong>
+                      <span>
+                        {o.people_count ?? 0} pessoa(s)
+                        {o.note ? ` · ${o.note}` : ""}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-quiet btn-sm"
+                      onClick={() => {
+                        setEditingOrg(o);
+                        setOrgName(o.name);
+                        setOrgNote(o.note || "");
+                      }}
+                    >
+                      Editar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {orgs.length === 0 ? (
-            <p className="muted panel-empty">Nenhuma empresa ainda.</p>
-          ) : (
-            <ul className="ms-dash-list">
-              {orgs.map((o) => (
-                <li key={o.id}>
-                  <div>
-                    <strong>{o.name}</strong>
-                    <span>
-                      {o.people_count ?? 0} pessoa(s)
-                      {o.note ? ` · ${o.note}` : ""}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-quiet btn-sm"
-                    onClick={() => {
-                      setEditingOrg(o);
-                      setOrgName(o.name);
-                      setOrgNote(o.note || "");
-                    }}
-                  >
-                    Editar
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
         </section>
       ) : (
         <section className="ms-dash-panel">
@@ -285,9 +301,9 @@ export function People() {
                 type="button"
                 className="btn-quiet btn-sm"
                 disabled={fixing}
-                onClick={() => void fixNames()}
+                onClick={() => void fixData()}
               >
-                {fixing ? "Corrigindo…" : "Corrigir nomes"}
+                {fixing ? "Limpando…" : "Corrigir acentos"}
               </button>
               <button
                 type="button"
@@ -299,40 +315,44 @@ export function People() {
               </button>
             </div>
           </header>
-          {items.length === 0 ? (
-            <p className="muted panel-empty">Ainda sem contatos — entram quando o WhatsApp fala.</p>
-          ) : (
-            <ul className="ms-dash-list">
-              {items.map((p) => (
-                <li key={p.id}>
-                  <button type="button" className="ms-dash-open" onClick={() => openFicha(p)}>
-                    <strong>{p.name || p.phone}</strong>
-                    <span>
-                      {p.phone}
-                      {p.organization_name
-                        ? ` · ${p.role_title ? `${p.role_title} · ` : ""}${p.organization_name}`
-                        : p.relation
-                          ? ` · ${p.relation}`
-                          : ""}
-                    </span>
-                    <span className="tag-row">
-                      {p.kind === "client" ? <span className="tag tag-client">cliente</span> : null}
-                      {p.vip ? <span className="tag tag-vip">VIP</span> : null}
-                      {(p.tags || []).map((t) => (
-                        <span key={t} className="tag">
-                          {t}
-                        </span>
-                      ))}
-                    </span>
-                    {p.note ? <span className="muted">{p.note}</span> : null}
-                  </button>
-                  <button type="button" className="btn-quiet btn-sm" onClick={() => openFicha(p)}>
-                    Ficha
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="panel-body tight">
+            {items.length === 0 ? (
+              <p className="muted panel-empty">Ainda sem contatos — entram quando o WhatsApp fala.</p>
+            ) : (
+              <ul className="ms-dash-list flush">
+                {items.map((p) => (
+                  <li key={p.id}>
+                    <button type="button" className="ms-dash-open" onClick={() => openFicha(p)}>
+                      <strong>{p.name || p.phone}</strong>
+                      <span>
+                        {p.phone}
+                        {p.organization_name
+                          ? ` · ${p.role_title ? `${p.role_title} · ` : ""}${p.organization_name}`
+                          : p.relation
+                            ? ` · ${p.relation}`
+                            : ""}
+                      </span>
+                      <span className="tag-row">
+                        {p.kind === "client" ? (
+                          <span className="tag tag-client">cliente</span>
+                        ) : null}
+                        {p.vip ? <span className="tag tag-vip">VIP</span> : null}
+                        {(p.tags || []).map((t) => (
+                          <span key={t} className="tag">
+                            {t}
+                          </span>
+                        ))}
+                      </span>
+                      {p.note ? <span className="muted">{p.note}</span> : null}
+                    </button>
+                    <button type="button" className="btn-quiet btn-sm" onClick={() => openFicha(p)}>
+                      Ficha
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
       )}
 
@@ -370,7 +390,7 @@ export function People() {
                 </label>
               </div>
               <p className="field-hint muted">
-                Cliente = relação comercial. VIP = prioridade de aviso (pedido do Eliezer).
+                Cliente = relação comercial. VIP = prioridade de aviso.
               </p>
 
               <label className="field">
@@ -378,7 +398,6 @@ export function People() {
                 <select
                   value={organizationId}
                   onChange={(e) => setOrganizationId(e.target.value)}
-                  disabled={Boolean(orgsError) && orgs.length === 0}
                 >
                   <option value="">— sem empresa —</option>
                   {orgs.map((o) => (
@@ -388,9 +407,6 @@ export function People() {
                   ))}
                 </select>
               </label>
-              {orgsError && orgs.length === 0 ? (
-                <p className="form-error">{orgsError}</p>
-              ) : null}
 
               <label className="field">
                 <span>Cargo na empresa</span>
