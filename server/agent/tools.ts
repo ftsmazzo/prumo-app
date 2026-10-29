@@ -93,7 +93,22 @@ export async function toolToday(
       ? `${title} · ${who.trim()}`
       : title;
 
+  const { listPendingContactProposals } = await import("../contactPropose.js");
+  const contactProps = await listPendingContactProposals(client, tenantId);
+
   const lines: string[] = [];
+  if (contactProps.length) {
+    lines.push("Contexto de contato pra confirmar:");
+    for (const p of contactProps.slice(0, 5)) {
+      const bits = [
+        p.personName || "contato",
+        p.organizationName,
+        p.roleTitle,
+        p.markClient ? "cliente" : null,
+      ].filter(Boolean);
+      lines.push(`- ${bits.join(" · ")}`);
+    }
+  }
   if (pending.rows.length) {
     lines.push("Para confirmar:");
     for (const p of pending.rows) {
@@ -179,6 +194,16 @@ export async function toolConfirmPending(
   client: pg.PoolClient,
   tenantId: string,
 ): Promise<ToolResult> {
+  // Primeiro: proposta de contexto de contato (empresa/cliente) — sem formulário.
+  const { confirmPendingContactProposal, listPendingContactProposals } = await import(
+    "../contactPropose.js"
+  );
+  const contactPending = await listPendingContactProposals(client, tenantId);
+  if (contactPending.length) {
+    const r = await confirmPendingContactProposal(client, tenantId);
+    if (r.ok) return { ok: true, text: r.text, evidence: r.evidence };
+  }
+
   const c = await client.query<{ id: string; title: string }>(
     `select id, title from commitments
       where tenant_id = $1 and needs_confirm = true and status in ('planned', 'confirmed')

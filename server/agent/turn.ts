@@ -121,8 +121,18 @@ async function resolveTurn(
   if (/^(hoje|agenda)\b/.test(lower) || /o que tenho/.test(lower)) {
     return fromTool(await toolToday(client, tenantId));
   }
-  if (/^confirm/.test(lower) || lower === "1") {
+  if (/^confirm/.test(lower) || lower === "1" || /^(sim|ok|isso|pode|confirma)$/.test(lower)) {
     return fromTool(await toolConfirmPending(client, tenantId));
+  }
+  if (/^(n[aã]o|desfaz|desfaz contato|erra(do)?|ignora)$/.test(lower) || /desfaz contato/.test(lower)) {
+    const { rejectPendingContactProposal, undoLastAutoContactLink } = await import(
+      "../contactPropose.js"
+    );
+    const rejected = await rejectPendingContactProposal(client, tenantId);
+    if (rejected.ok) return { text: rejected.text, evidence: rejected.evidence };
+    const undone = await undoLastAutoContactLink(client, tenantId);
+    if (undone.ok) return { text: undone.text, evidence: undone.evidence };
+    return { text: rejected.text, evidence: "" };
   }
   if (/remarca/.test(lower)) {
     return fromTool(
@@ -155,7 +165,7 @@ async function resolveTurn(
   }
   if (/^ajuda$|^help$/.test(lower)) {
     return {
-      text: "Pode falar natural: o que tenho hoje, confirma, remarca X, conclui Y, busca contrato com Daniel, anota reunião amanhã 15h…",
+      text: "Pode falar natural: o que tenho hoje, confirma (agenda ou contexto de contato), desfaz contato, remarca X, conclui Y, busca… O motor tenta vincular empresa/cliente sozinho a partir do WhatsApp.",
       evidence: "",
     };
   }

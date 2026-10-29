@@ -123,7 +123,7 @@ export async function refreshConversationBrief(
   const existingTags = meta.rows[0]?.tags ?? [];
   const tags = cleanTags([...existingTags, ...fichado.tags]);
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     recentCount: chronological.length,
     recentTurns,
     openItems: fichado.openItems,
@@ -131,11 +131,12 @@ export async function refreshConversationBrief(
     tone: fichado.tone,
     ficharSource: fichado.source,
     ficharError: fichado.error || null,
-    // Transcript curto só como evidência interna — UI mostra summary LLM.
+    contactHint: fichado.contactHint,
     transcriptTail: lines.slice(-24),
     updatedFrom: "organize",
   };
 
+  // Preserva contactProposal já aplicada/pendente (não zerar no re-fichar).
   await client.query(
     `insert into conversation_briefs (
        tenant_id, conversation_id, person_id, summary, micro_summary, open_threads, payload, version, updated_at
@@ -144,7 +145,12 @@ export async function refreshConversationBrief(
        set summary = excluded.summary,
            micro_summary = excluded.micro_summary,
            open_threads = excluded.open_threads,
-           payload = excluded.payload,
+           payload = excluded.payload ||
+             case
+               when conversation_briefs.payload ? 'contactProposal'
+                 then jsonb_build_object('contactProposal', conversation_briefs.payload->'contactProposal')
+               else '{}'::jsonb
+             end,
            person_id = coalesce(excluded.person_id, conversation_briefs.person_id),
            version = conversation_briefs.version + 1,
            updated_at = now()`,
@@ -167,6 +173,27 @@ export async function refreshConversationBrief(
       where id = $1 and tenant_id = $2`,
     [opts.conversationId, opts.tenantId, fichado.microSummary, tags],
   );
+
+  // Motor de contato: vínculo/cliente a partir do fio (sem formulário).
+  try {
+    const { resolveContactContext } = await import("./contactPropose.js");
+    const contact = await resolveContactContext(client, {
+      tenantId: opts.tenantId,
+      conversationId: opts.conversationId,
+      personId: meta.rows[0]?.person_id ?? null,
+      personName,
+      thread: lines.join("\n"),
+      llmHint: fichado.contactHint,
+    });
+    if (contact.applied || contact.proposed) {
+      payload.contactResolution = contact;
+    }
+  } catch (err) {
+    console.warn(
+      "[organize] contactPropose falhou",
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   return {
     summary: fichado.summary,

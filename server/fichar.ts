@@ -15,6 +15,12 @@ export type FichadoOpenItem = {
   ownerAction: boolean;
 };
 
+export type ContactHintLlm = {
+  organizationName?: string | null;
+  roleTitle?: string | null;
+  markClient?: boolean;
+};
+
 export type FichadoResult = {
   summary: string;
   microSummary: string;
@@ -22,6 +28,7 @@ export type FichadoResult = {
   themes: Array<{ label: string; status: "open" | "decided" | "idle" }>;
   tags: string[];
   tone: string;
+  contactHint: ContactHintLlm | null;
   source: "llm" | "fallback";
   error?: string;
 };
@@ -35,6 +42,8 @@ type LlmOut = {
   open_items?: Array<{ kind?: string; label?: string; ownerAction?: boolean; owner_action?: boolean }>;
   tags?: string[];
   tone?: string;
+  contactHint?: ContactHintLlm;
+  contact_hint?: ContactHintLlm;
 };
 
 const SYSTEM = `Você é o Fichador do Prumo: secretário que LÊ O FIO e compreende o assunto.
@@ -46,8 +55,14 @@ Responda só JSON:
   "themes": [{ "label": "tema específico", "status": "open"|"decided"|"idle" }],
   "openItems": [{ "kind": "social"|"maybe_meeting"|"followup"|"note", "label": "demanda concreta", "ownerAction": true|false }],
   "tags": ["tech","comercial",...],
-  "tone": "social"|"operational"|"mixed"|"empty"
+  "tone": "social"|"operational"|"mixed"|"empty",
+  "contactHint": {
+    "organizationName": "empresa citada no fio ou null",
+    "roleTitle": "cargo do contato se claro (funcionário, dono…) ou null",
+    "markClient": true/false
+  }
 }
+contactHint: só o que o FIO deixa claro. Não invente empresa. VIP não vai aqui.
 Direção (crítico):
 - ownerAction=true SÓ se a próxima ação for do DONO (Você precisa fazer algo) e isso estiver claro no fio.
 - Atualização técnica do contato (link, repo, "já subi") sem pedido a você → note ou openItems com ownerAction=false — NÃO invente pendência sua.
@@ -130,6 +145,19 @@ export async function ficharConversation(
       }))
       .slice(0, 8);
 
+    const hintRaw = data.contactHint || data.contact_hint || null;
+    const contactHint: ContactHintLlm | null = hintRaw
+      ? {
+          organizationName: hintRaw.organizationName
+            ? String(hintRaw.organizationName).trim().slice(0, 80)
+            : null,
+          roleTitle: hintRaw.roleTitle
+            ? String(hintRaw.roleTitle).trim().slice(0, 40)
+            : null,
+          markClient: Boolean(hintRaw.markClient),
+        }
+      : null;
+
     return {
       summary: summary || micro,
       microSummary: micro || summary.slice(0, 280),
@@ -137,6 +165,7 @@ export async function ficharConversation(
       themes,
       tags: cleanTags([...(data.tags || []), ...heuristicTags]),
       tone: data.tone || "mixed",
+      contactHint,
       source: "llm",
     };
   } catch (err) {
@@ -203,6 +232,7 @@ function fallbackFichado(thread: string, tags: string[]): FichadoResult {
     themes: [],
     tags,
     tone: "empty",
+    contactHint: null,
     source: "fallback",
   };
 }
